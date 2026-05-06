@@ -1,0 +1,24 @@
+[project]
+name = "brief-water-quality-pipeline"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "delta-spark==3.2.0",
+    "dlt[deltalake]>=1.26.0",
+    "pandas>=3.0.2",
+    "pyspark==3.5.3",
+    "requests>=2.33.1",
+    "setuptools>=82.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "autopep8>=2.3.2",
+    "flake8>=7.3.0",
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
