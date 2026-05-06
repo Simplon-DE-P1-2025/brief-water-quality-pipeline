@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.0.0...v1.0.1) (2026-05-06)
+
+### Bug Fixes
+
+* refactor bronze scripts for testability and flake8 compliance ([cd13af2](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/cd13af2de6544c2cbf94e4b1e819f30c94bac660))
+* resolve merge conflict in ingestion_geo.py ([a1f6d99](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/a1f6d99cc601a19f6773c6122dba4492b3bb8b25))
+
 ## 1.0.0 (2026-05-06)
 
 ### Features
