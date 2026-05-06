@@ -79,3 +79,87 @@ pipelines:
     logging:
       level:           "INFO"
       include_context: false
+
+# =========================================================
+# SILVER
+# =========================================================
+silver:
+  output_table: "water_quality"
+
+  spark:
+    app_name:           "silver_transform"
+    driver_memory:      "4g"
+    shuffle_partitions: 8
+
+  paths:
+    local:
+      bronze: "data/bronze"
+      silver: "data/silver"
+    databricks:
+      bronze: "dbfs:/mnt/bronze"
+      silver: "dbfs:/mnt/silver"
+
+  dedup_keys:
+    - "code_prelevement"
+    - "code_parametre"
+    - "code_lieu_analyse"
+
+  partition_by:
+    - "annee"
+    - "code_departement"
+
+  # Mapping code_type_parametre → libellé catégorie (doc SISE-Eaux)
+  categories:
+    B: "Microbiologique"
+    P: "Physico-chimique"
+    R: "Radiologique"
+    N: "Physicochimique"
+    O: "Organoleptique"
+
+  # Sous-catégories par regex sur libelle_parametre
+  sous_categories:
+    "Azote":           "nitrate|nitrite|azote"
+    "Pesticide":       "pesticide|herbicide|insecticide|atrazine"
+    "Metal lourd":     "plomb|arsenic|chrome|cadmium|mercure|cuivre"
+    "Organoleptique":  "ph|turbidité|turbidite|conductivité|conductivite|couleur|odeur"
+    "Bacteriologique": "escherichia|coliform|entérocoque|enterocoque|bactérie|bacterie|coli|fécaux"
+    "Desinfection":    "chlore|chlorure|désinfect|desinfect"
+    "Radiologique":    "radioactivité|radioactivite|tritium|césium|cesium"
+
+  # Colonnes finales du DataFrame Silver (ordre conservé)
+  output_columns:
+    - code_prelevement
+    - reference_analyse
+    - date_prelevement
+    - annee
+    - mois
+    - code_commune
+    - nom_commune
+    - code_departement
+    - nom_departement
+    - nom_region
+    - code_region
+    - latitude
+    - longitude
+    - population
+    - code_reseau
+    - nom_reseau
+    - nom_distributeur
+    - nom_uge
+    - code_parametre
+    - libelle_parametre
+    - libelle_parametre_maj
+    - code_type_parametre
+    - categorie_parametre
+    - sous_categorie_parametre
+    - resultat_numerique
+    - resultat_alphanumerique
+    - libelle_unite
+    - code_lieu_analyse
+    - conformite_globale
+    - conformite_standard
+    - est_conforme
+    - conformite_bact
+    - conformite_pc
+    - conformite_ref_bact
+    - conformite_ref_pc
