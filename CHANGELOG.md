@@ -1,3 +1,13 @@
+## [1.1.0](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.0.1...v1.1.0) (2026-05-06)
+
+### Features
+
+* **silver:** pipeline Silver complet — nettoyage, enrichissement géo, catégorisation, conformité, tests unitaires ([34a87fc](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/34a87fc08f97bb2adf23cb6e98541e8fc42a9da7))
+
+### Bug Fixes
+
+* **tests:** remove undefined DataFrame type hint in make_water_df ([5cd7337](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/5cd73378e399e57ccd30ccbe46e562b4a719491a))
+
 ## [1.0.1](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.0.0...v1.0.1) (2026-05-06)
 
 ### Bug Fixes
