@@ -1,0 +1,81 @@
+# =========================================================
+# ENVIRONMENT
+# =========================================================
+environment:
+  is_databricks: false
+  active_mode:   dev
+
+  mode:
+    dev:
+      years:       [2024, 2025, 2026]
+      departments: ["13", "69", "75"]
+      max_workers: 5
+
+    prod:
+      years:       [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+      departments: "DEFAULT_FRANCE"
+      max_workers: 20
+
+
+# =========================================================
+# STORAGE
+# =========================================================
+storage:
+  bronze:
+    local:      "data"
+    databricks: "dbfs:/mnt/bronze"
+
+
+# =========================================================
+# PIPELINES
+# =========================================================
+pipelines:
+
+  hubeau:
+    api_url:       "https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/resultats_dis"
+    pipeline_name: "hubeau_bronze"
+    dataset_name:  "bronze"
+    file_format:   "delta"
+    max_depth:     20000
+    max_retries:   3
+    pagination:
+      sleep_between_requests: 0.3
+    date_format:
+      force_end_of_day:  true
+      end_of_day_suffix: "T23:59:59Z"
+    primary_key:
+      - "code_commune"
+      - "libelle_parametre"
+      - "date_prelevement"
+    transformation:
+      partition_column: "annee_partition"
+      serialize_lists:
+        reseaux: "json"
+    logging:
+      level:           "INFO"
+      include_context: true
+      format:          "human"
+    metrics:
+      enable:            false
+      log_records_count: true
+      log_failed_tasks:  true
+
+  geo:
+    base_url:       "https://geo.api.gouv.fr"
+    pipeline_name:  "geo_bronze"
+    dataset_name:   "bronze"
+    file_format:    "delta"
+    commune_fields: "code,nom,codeDepartement,codeRegion,centre,population"
+    tables:
+      regions:
+        primary_key: "code_region"
+      departements:
+        primary_key: "code_departement"
+      communes:
+        primary_key: "code_commune"
+    max_workers: 5
+    limits:
+      communes_limit: 100000
+    logging:
+      level:           "INFO"
+      include_context: false

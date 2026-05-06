@@ -3,158 +3,156 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Bronze - Ingestion via Hub'Eau API
+# MAGIC # Bronze - Hub'Eau Water Quality Ingestion
 # MAGIC
-# MAGIC Raw ingestion only - no deduplication, no transformation.
-# MAGIC Deduplication and cleaning are handled in Silver layer.
+# MAGIC Uses dlt (https://dlthub.com) for Delta Lake writes.
+# MAGIC All parameters are in config/config.yaml — do NOT edit this script.
 # MAGIC
-# MAGIC Parallel ingestion via ThreadPoolExecutor.
-# MAGIC 4-level pagination: year -> quarter -> month -> week
-# MAGIC
-# MAGIC Fix: date_max uses T23:59:59Z to capture all records on the last day
-# MAGIC      (API interprets date-only as T00:00:00Z, missing after-midnight records)
-# MAGIC
-# MAGIC DLT: Delta Live Tables blocks are commented out.
-# MAGIC      Uncomment when running on Databricks with DLT pipelines.
+# MAGIC Pagination strategy (4 levels):
+# MAGIC   year -> quarter -> month -> week
 
 # COMMAND ----------
 
 import os
-import calendar
+import json
 import time
-import threading
+import calendar
 import requests
-import pandas as pd
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import current_timestamp, lit, year, to_timestamp
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import yaml
 from datetime import datetime
-from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-IS_DATABRICKS = "DATABRICKS_RUNTIME_VERSION" in os.environ
-
-if not IS_DATABRICKS:
-    from delta import configure_spark_with_delta_pip
-
-# ---------------------------------------------------------------------------
-# DLT — Uncomment when using Delta Live Tables on Databricks
-# DLT handles Delta writes, schema evolution and pipeline orchestration
-# automatically — no need for write_to_delta() calls.
-# ---------------------------------------------------------------------------
-# import dlt
+import dlt
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Parameters - Edit here
+# MAGIC ## Context
 
 # COMMAND ----------
 
-# ---------------------------------------------------------------------------
-# DEV — Local (3 departments, 3 years)
-# ---------------------------------------------------------------------------
-YEARS       = [2024, 2025, 2026]
-DEPARTMENTS = ["13", "69", "75"]
-MAX_WORKERS = 5
+class Context:
+    def __init__(self):
+        self.dept  = None
+        self.year  = None
+        self.month = None
 
-# ---------------------------------------------------------------------------
-# PROD — Databricks only
-# Just change the parameters below — no other configuration needed.
-# MAX_WORKERS uses Python threading for API requests, no Spark config required.
-# The Databricks cluster handles Delta writes elastically on its own workers.
-# ---------------------------------------------------------------------------
-# YEARS = list(range(2016, 2027))
-# DEPARTMENTS = (
-#     [str(i).zfill(2) for i in range(1, 96)]
-#     + ["2A", "2B"]
-#     + ["971", "972", "973", "974", "976"]
-# )
-# MAX_WORKERS = 20
-
-# ---------------------------------------------------------------------------
-# Common parameters
-# ---------------------------------------------------------------------------
-
-BRONZE_PATH = "dbfs:/data/bronze/water_quality" if IS_DATABRICKS else "data/bronze/water_quality"
-
-API_URL    = "https://hubeau.eaufrance.fr/api/v1/qualite_eau_potable/resultats_dis"
-API_FIELDS = (
-    "code_commune,nom_commune,code_departement,"
-    "libelle_parametre,resultat_numerique,resultat_alphanumerique,"
-    "unite_mesure,limite_qualite_parametre,reference_qualite_parametre,"
-    "conclusion_conformite_parametre,date_prelevement,"
-    "coordonnee_x,coordonnee_y"
-)
-MAX_DEPTH   = 20000
-MAX_RETRIES = 3
-BATCH_SIZE  = 30000
-
-print(f"Environment  : {'Databricks' if IS_DATABRICKS else 'Local'}")
-print(f"Mode         : {'PROD' if len(DEPARTMENTS) > 10 else 'DEV'}")
-print(f"Years        : {YEARS}")
-print(f"Departments  : {DEPARTMENTS}")
-print(f"Workers      : {MAX_WORKERS}")
-print(f"Bronze path  : {BRONZE_PATH}")
+CTX = Context()
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Spark Session
+# MAGIC ## Logger
 
 # COMMAND ----------
 
-if IS_DATABRICKS:
-    spark = SparkSession.builder.getOrCreate()
-else:
-    spark = (
-        configure_spark_with_delta_pip(
-            SparkSession.builder
-            .appName("bronze-hubeau-api")
-            .master("local[*]")
-            .config("spark.driver.memory", "4g")
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config(
-                "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog",
-            )
-            .config("spark.sql.adaptive.enabled", "true")
-        )
-        .getOrCreate()
+def log(stage, msg, extra=None):
+    ts     = datetime.now().strftime("%H:%M:%S")
+    ctx    = f"dept={CTX.dept} year={CTX.year} month={CTX.month}".replace("None", "-")
+    extras = (" | " + ", ".join(f"{k}={v}" for k, v in extra.items())) if extra else ""
+    print(f"[{ts}] [{stage}] {ctx} | {msg}{extras}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Departments
+
+# COMMAND ----------
+
+def get_departments():
+    """Returns the full list of French department codes."""
+    return (
+        [f"{i:02d}" for i in range(1, 20)]
+        + ["2A", "2B"]
+        + [f"{i:02d}" for i in range(21, 96)]
+        + ["971", "972", "973", "974", "976"]
     )
 
-spark.sparkContext.setLogLevel("ERROR")
-write_lock  = threading.Lock()
-debug_lock  = threading.Lock()
-debug_stats = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(int))))
-
-print(f"Spark {spark.version} ready")
-
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Functions
+# MAGIC ## Config
 
 # COMMAND ----------
 
-def build_params(dept, date_min, date_max):
+def load_config(path="config/config.yaml"):
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+def resolve_scope(cfg):
     """
-    Builds API query parameters.
-    date_max must include T23:59:59Z to capture all records on the last day.
-    The API interprets date-only as T00:00:00Z, missing after-midnight records.
+    Resolves active mode (dev/prod) from config.
+    Expands DEFAULT_FRANCE sentinel to the full department list.
     """
-    if "T" not in str(date_max):
-        date_max = f"{date_max}T23:59:59Z"
+    active = cfg["environment"]["active_mode"]
+    scope  = cfg["environment"]["mode"][active]
+    depts  = scope["departments"]
+    if depts == "DEFAULT_FRANCE":
+        depts = get_departments()
     return {
-        "code_departement"    : dept,
-        "date_min_prelevement": date_min,
-        "date_max_prelevement": date_max,
-        "size"                : MAX_DEPTH,
-        "page"                : 1,
-        "fields"              : API_FIELDS,
+        "years"      : scope["years"],
+        "departments": depts,
+        "max_workers": scope["max_workers"],
+        "active_mode": active,
     }
 
 
-def fetch_page(params):
+cfg        = load_config()
+hubeau_cfg = cfg["pipelines"]["hubeau"]
+
+IS_DATABRICKS = (
+    cfg["environment"]["is_databricks"]
+    or "DATABRICKS_RUNTIME_VERSION" in os.environ
+)
+
+BRONZE_PATH = (
+    cfg["storage"]["bronze"]["databricks"]
+    if IS_DATABRICKS
+    else cfg["storage"]["bronze"]["local"]
+)
+
+scope       = resolve_scope(cfg)
+YEARS       = scope["years"]
+DEPARTMENTS = scope["departments"]
+MAX_WORKERS = scope["max_workers"]
+
+API_URL     = hubeau_cfg["api_url"]
+MAX_DEPTH   = hubeau_cfg["max_depth"]
+MAX_RETRIES = hubeau_cfg["max_retries"]
+SLEEP_S     = hubeau_cfg["pagination"]["sleep_between_requests"]
+END_DAY     = hubeau_cfg["date_format"]["end_of_day_suffix"]
+FORCE_EOD   = hubeau_cfg["date_format"]["force_end_of_day"]
+
+log("CONFIG", "loaded", {
+    "env"    : "databricks" if IS_DATABRICKS else "local",
+    "mode"   : scope["active_mode"],
+    "depts"  : len(DEPARTMENTS),
+    "years"  : len(YEARS),
+    "workers": MAX_WORKERS,
+})
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## API
+
+# COMMAND ----------
+
+def build_params(dept, d_min, d_max):
+    """Builds Hub'Eau API parameters. Appends T23:59:59Z on date_max if needed."""
+    if FORCE_EOD and "T" not in str(d_max):
+        d_max = f"{d_max}{END_DAY}"
+    return {
+        "code_departement"    : dept,
+        "date_min_prelevement": d_min,
+        "date_max_prelevement": d_max,
+        "size"                : MAX_DEPTH,
+        "page"                : 1,
+    }
+
+
+def fetch(params):
     """Calls Hub'Eau API with exponential retry on timeout."""
     for attempt in range(MAX_RETRIES):
         try:
@@ -163,288 +161,201 @@ def fetch_page(params):
             return r.json()
         except requests.exceptions.ReadTimeout:
             wait = 5 * (2 ** attempt)
-            print(f"  Timeout (attempt {attempt + 1}/{MAX_RETRIES}) -- waiting {wait}s...")
+            log("API", "timeout", {"attempt": attempt + 1, "wait_s": wait})
             time.sleep(wait)
             if attempt == MAX_RETRIES - 1:
                 raise
+        except Exception as e:
+            log("API", "error", {"error": str(e)})
+            return {}
     return {}
 
+# COMMAND ----------
 
-def write_to_delta(records):
-    """
-    Writes raw records to Delta Lake Bronze.
-    No transformation, no deduplication — raw data as-is from API.
-    Thread-safe via write_lock.
+# MAGIC %md
+# MAGIC ## Pagination
 
-    ---------------------------------------------------------------------------
-    DLT alternative — Uncomment when using Delta Live Tables on Databricks.
-    Replace all write_to_delta() calls with a single @dlt.table decorator.
-    DLT handles writes, schema evolution and pipeline orchestration automatically.
+# COMMAND ----------
 
-    @dlt.table(
-        name="bronze_water_quality",
-        comment="Raw water quality data from Hub'Eau API. No dedup, no transform.",
-        partition_cols=["annee_partition"],
-        table_properties={"quality": "bronze"}
-    )
-    def bronze_water_quality():
-        records = run_ingestion()   # call the ingestion pipeline
-        pdf     = pd.DataFrame(records)
-        df      = spark.createDataFrame(pdf)
-        return (
-            df.withColumn("ingestion_timestamp", current_timestamp())
-              .withColumn("source", lit("hubeau_api"))
-              .withColumn(
-                  "annee_partition",
-                  year(to_timestamp("date_prelevement", "yyyy-MM-dd'T'HH:mm:ss'Z'"))
-              )
-        )
-    ---------------------------------------------------------------------------
-    """
-    if not records:
-        return
-    with write_lock:
-        pdf = pd.DataFrame(records)
-        df  = spark.createDataFrame(pdf)
-        df  = (
-            df.withColumn("ingestion_timestamp", current_timestamp())
-              .withColumn("source", lit("hubeau_api"))
-              .withColumn(
-                  "annee_partition",
-                  year(to_timestamp("date_prelevement", "yyyy-MM-dd'T'HH:mm:ss'Z'"))
-              )
-        )
-        (
-            df.write
-            .format("delta")
-            .mode("append")
-            .partitionBy("annee_partition")
-            .save(BRONZE_PATH)
-        )
-
-
-def log_debug(dept, yr, month, week, count):
-    """Thread-safe debug counter update."""
-    with debug_lock:
-        debug_stats[dept][yr][month][week] += count
-
-
-def get_weeks(yr, month):
-    """
-    Returns list of (date_min, date_max) for each week of the month.
-    date_max uses T23:59:59Z to capture all records on the last day of each week.
-    """
-    last_day = calendar.monthrange(yr, month)[1]
+def get_weeks(year, month):
+    """Returns (d_min, d_max) pairs for each week of the month."""
+    last  = calendar.monthrange(year, month)[1]
     weeks = [
-        (f"{yr}-{month:02d}-01", f"{yr}-{month:02d}-07T23:59:59Z"),
-        (f"{yr}-{month:02d}-08", f"{yr}-{month:02d}-14T23:59:59Z"),
-        (f"{yr}-{month:02d}-15", f"{yr}-{month:02d}-21T23:59:59Z"),
-        (f"{yr}-{month:02d}-22", f"{yr}-{month:02d}-28T23:59:59Z"),
+        (f"{year}-{month:02d}-01", f"{year}-{month:02d}-07{END_DAY}"),
+        (f"{year}-{month:02d}-08", f"{year}-{month:02d}-14{END_DAY}"),
+        (f"{year}-{month:02d}-15", f"{year}-{month:02d}-21{END_DAY}"),
+        (f"{year}-{month:02d}-22", f"{year}-{month:02d}-28{END_DAY}"),
     ]
-    if last_day > 28:
-        weeks.append((
-            f"{yr}-{month:02d}-29",
-            f"{yr}-{month:02d}-{last_day:02d}T23:59:59Z"
-        ))
+    if last > 28:
+        weeks.append((f"{year}-{month:02d}-29", f"{year}-{month:02d}-{last:02d}{END_DAY}"))
     return weeks
 
 
-def fetch_by_week(dept, yr, month):
-    """Level 4 - fetches data week by week for a given month."""
-    records = []
-    for (d_min, d_max) in get_weeks(yr, month):
-        data       = fetch_page(build_params(dept, d_min, d_max))
-        rows       = data.get("data", [])
-        count      = data.get("count", 0)
-        week_label = f"{d_min[8:10]}-{d_max[8:10]}"
-        if count > MAX_DEPTH:
-            print(f"    WARNING week {d_min} -> {d_max}: {count} > {MAX_DEPTH} -- truncated")
-        print(f"    week {d_min} -> {d_max}: {len(rows)} records")
-        log_debug(dept, yr, month, week_label, len(rows))
+def fetch_by_week(dept, year, month):
+    """Level 4 - fetches week by week within a month."""
+    CTX.dept  = dept
+    CTX.year  = year
+    CTX.month = month
+    records   = []
+    for d_min, d_max in get_weeks(year, month):
+        data = fetch(build_params(dept, d_min, d_max))
+        rows = data.get("data", [])
+        log("WEEK", f"{d_min} -> {d_max}", {"rows": len(rows)})
         records.extend(rows)
-        time.sleep(0.3)
+        time.sleep(SLEEP_S)
     return records
 
 
-def fetch_by_month_range(dept, yr, month_start, month_end):
-    """
-    Level 3 - fetches data for months between month_start and month_end.
-    Used by fetch_by_quarter to fetch only the 3 months of the quarter.
-    date_max uses T23:59:59Z to capture all records on the last day of each month.
-    """
-    records = []
-    for m in range(month_start, month_end + 1):
-        last_day = calendar.monthrange(yr, m)[1]
-        d_min    = f"{yr}-{m:02d}-01"
-        d_max    = f"{yr}-{m:02d}-{last_day:02d}T23:59:59Z"
-        data     = fetch_page(build_params(dept, d_min, d_max))
-        count    = data.get("count", 0)
-        rows     = data.get("data", [])
-        if count == 0:
-            continue
-        if count > MAX_DEPTH:
-            print(f"  month {d_min[:7]}: {count} > {MAX_DEPTH} -- splitting by week")
-            records.extend(fetch_by_week(dept, yr, m))
-        else:
-            print(f"  month {d_min[:7]}: {count} records")
-            log_debug(dept, yr, m, "all", count)
-            records.extend(rows)
-        time.sleep(0.3)
-    return records
+def fetch_by_month(dept, year, month):
+    """Level 3 - fetches one month, splits by week if above max_depth."""
+    CTX.dept  = dept
+    CTX.year  = year
+    CTX.month = month
+    last  = calendar.monthrange(year, month)[1]
+    d_min = f"{year}-{month:02d}-01"
+    d_max = f"{year}-{month:02d}-{last:02d}"
+    data  = fetch(build_params(dept, d_min, d_max))
+    count = data.get("count", 0)
+    if count == 0:
+        return []
+    if count > MAX_DEPTH:
+        log("MONTH", "split by week", {"month": month, "count": count})
+        return fetch_by_week(dept, year, month)
+    log("MONTH", "ok", {"month": month, "rows": count})
+    return data.get("data", [])
 
 
-# ---------------------------------------------------------------------------
-# Quarters with T23:59:59Z on date_max to capture after-midnight records
-# ---------------------------------------------------------------------------
 QUARTERS = [
-    ("-01-01", "-03-31T23:59:59Z", 1,  3),   # Q1: months 1-3
-    ("-04-01", "-06-30T23:59:59Z", 4,  6),   # Q2: months 4-6
-    ("-07-01", "-09-30T23:59:59Z", 7,  9),   # Q3: months 7-9
-    ("-10-01", "-12-31T23:59:59Z", 10, 12),  # Q4: months 10-12
+    ("-01-01", "-03-31", 1,  3),
+    ("-04-01", "-06-30", 4,  6),
+    ("-07-01", "-09-30", 7,  9),
+    ("-10-01", "-12-31", 10, 12),
 ]
 
 
-def fetch_by_quarter(dept, yr):
-    """
-    Level 2 - fetches data quarter by quarter.
-    Only fetches months within the quarter when splitting.
-    """
-    records = []
-    for (q_min, q_max, month_start, month_end) in QUARTERS:
-        d_min = f"{yr}{q_min}"
-        d_max = f"{yr}{q_max}"
-        data  = fetch_page(build_params(dept, d_min, d_max))
+def fetch_by_quarter(dept, year):
+    """Level 2 - fetches quarter by quarter, splits by month if above max_depth."""
+    CTX.dept  = dept
+    CTX.year  = year
+    CTX.month = None
+    records   = []
+    for q_min, q_max, m_start, m_end in QUARTERS:
+        d_min = f"{year}{q_min}"
+        d_max = f"{year}{q_max}"
+        data  = fetch(build_params(dept, d_min, d_max))
         count = data.get("count", 0)
-        rows  = data.get("data", [])
         if count == 0:
             continue
         if count > MAX_DEPTH:
-            print(f"  quarter {d_min}: {count} > {MAX_DEPTH} -- splitting by month ({month_start}-{month_end})")
-            records.extend(fetch_by_month_range(dept, yr, month_start, month_end))
+            log("QUARTER", "split by month", {"quarter": d_min, "count": count})
+            for m in range(m_start, m_end + 1):
+                records.extend(fetch_by_month(dept, year, m))
         else:
-            print(f"  quarter {d_min}: {count} records")
-            q_label = f"Q{(month_start - 1) // 3 + 1}"
-            log_debug(dept, yr, q_label, "all", count)
-            records.extend(rows)
-        time.sleep(0.3)
+            log("QUARTER", "ok", {"quarter": d_min, "rows": count})
+            records.extend(data.get("data", []))
+        time.sleep(SLEEP_S)
     return records
 
 
-def fetch_year(dept, yr):
-    """
-    Entry point. Fetches all data for a (dept, year) combination.
-    date_max uses T23:59:59Z to include all records on Dec 31.
-    Returns (dept, yr, records).
-    """
-    data  = fetch_page(build_params(dept, f"{yr}-01-01", f"{yr}-12-31T23:59:59Z"))
+def fetch_year(dept, year):
+    """Level 1 - fetches one year, splits by quarter if above max_depth."""
+    CTX.dept  = dept
+    CTX.year  = year
+    CTX.month = None
+    data  = fetch(build_params(dept, f"{year}-01-01", f"{year}-12-31"))
     count = data.get("count", 0)
-    rows  = data.get("data", [])
-
     if count == 0:
-        return dept, yr, []
-
+        log("YEAR", "no data")
+        return dept, year, []
     if count <= MAX_DEPTH:
-        print(f"  dept {dept} year {yr}: {count} records")
-        log_debug(dept, yr, "all", "all", count)
-        return dept, yr, rows
+        log("YEAR", "ok", {"rows": count})
+        return dept, year, data.get("data", [])
+    log("YEAR", "split by quarter", {"count": count})
+    return dept, year, fetch_by_quarter(dept, year)
 
-    print(f"  dept {dept} year {yr}: {count} > {MAX_DEPTH} -- splitting by quarter")
-    return dept, yr, fetch_by_quarter(dept, yr)
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Ingestion
-
-# COMMAND ----------
-
-os.makedirs(BRONZE_PATH, exist_ok=True)
-
-print("=" * 50)
-print("BRONZE INGESTION -- HUB'EAU API (PARALLEL)")
-print(f"Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"Tasks   : {len(DEPARTMENTS)} depts x {len(YEARS)} years = {len(DEPARTMENTS) * len(YEARS)} tasks")
-print(f"Workers : {MAX_WORKERS}")
-print("=" * 50)
-
-tasks = [(dept, yr) for dept in DEPARTMENTS for yr in YEARS]
-total = 0
-batch = []
-
-with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-    futures = {
-        executor.submit(fetch_year, dept, yr): (dept, yr)
-        for dept, yr in tasks
-    }
-    for future in as_completed(futures):
-        try:
-            dept, yr, records = future.result()
-        except Exception as e:
-            dept, yr = futures[future]
-            print(f"  ERROR dept {dept} year {yr}: {e}")
-            continue
-
-        if not records:
-            print(f"  dept {dept} year {yr}: no data")
-            continue
-
-        with write_lock:
-            batch.extend(records)
-            total += len(records)
-            current_batch = len(batch)
-
-        print(f"  OK dept {dept} year {yr}: {len(records)} records -- batch: {current_batch} -- total: {total}")
-
-        if current_batch >= BATCH_SIZE:
-            print(f"  Writing batch ({current_batch} records)...")
-            write_to_delta(batch)
-            with write_lock:
-                batch = []
-            print(f"  Batch written.")
-
-if batch:
-    print(f"\nWriting final batch ({len(batch)} records)...")
-    write_to_delta(batch)
-
-print(f"\n{'=' * 50}")
-print(f"DONE -- {total:,} records written to {BRONZE_PATH}")
-print(f"{'=' * 50}")
+def prepare_record(rec, yr):
+    """
+    Enriches a raw API record before yielding to dlt:
+    - Adds annee_partition from date_prelevement
+    - Serializes list/dict fields to JSON string
+    """
+    date = rec.get("date_prelevement", "")
+    rec["annee_partition"] = int(date[:4]) if date and len(date) >= 4 else yr
+    for k, v in list(rec.items()):
+        if isinstance(v, (list, dict)):
+            rec[k] = json.dumps(v, ensure_ascii=False)
+    return rec
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Debug report — records per dept / year / month / week
+# MAGIC ## dlt Resource
 
 # COMMAND ----------
 
-print("\n" + "=" * 60)
-print("DEBUG REPORT -- API CALLS BREAKDOWN")
-print("=" * 60)
+@dlt.resource(
+    name              = "water_quality",
+    write_disposition = "append",
+    primary_key       = hubeau_cfg["primary_key"],
+    columns={
+        "annee_partition"      : {"data_type": "bigint", "partition": True},
+        "libelle_parametre_web": {"data_type": "text"},
+    },
+)
+def water_quality():
+    """
+    dlt generator for Hub'Eau water quality data.
+    Collects all records in parallel (ThreadPoolExecutor), then yields to dlt.
+    Pool is fully closed before yielding to avoid generator deadlocks.
+    """
+    tasks    = [(d, y) for d in DEPARTMENTS for y in YEARS]
+    all_rows = []
+    total    = 0
 
-grand_total = 0
+    log("DLT", "start", {"tasks": len(tasks), "workers": MAX_WORKERS})
 
-for dept in sorted(debug_stats):
-    dept_total = 0
-    print(f"\nDept {dept}")
-    print(f"  {'Year':<6} {'Month/Quarter':<20} {'Week':<12} {'Records':>10}")
-    print(f"  {'-'*6} {'-'*20} {'-'*12} {'-'*10}")
-    for yr in sorted(debug_stats[dept]):
-        yr_total = 0
-        for month in sorted(debug_stats[dept][yr], key=lambda x: str(x)):
-            for week, count in sorted(debug_stats[dept][yr][month].items()):
-                label_m = f"month {month}" if isinstance(month, int) else month
-                label_w = f"week {week}" if week != "all" else "full"
-                print(f"  {yr:<6} {label_m:<20} {label_w:<12} {count:>10,}")
-                yr_total += count
-        print(f"  {yr:<6} {'TOTAL':<20} {'':12} {yr_total:>10,}")
-        dept_total += yr_total
-    print(f"\n  Dept {dept} TOTAL: {dept_total:,}")
-    grand_total += dept_total
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(fetch_year, d, y): (d, y) for d, y in tasks}
+        for future in as_completed(futures):
+            dept, year = futures[future]
+            try:
+                _, _, rows = future.result()
+            except Exception as exc:
+                log("DLT", "task failed", {"dept": dept, "year": year, "error": str(exc)})
+                continue
+            rows   = [prepare_record(r, year) for r in rows]
+            total += len(rows)
+            all_rows.extend(rows)
+            log("DLT", "task done", {"dept": dept, "year": year, "rows": len(rows), "total": total})
 
-print(f"\n{'=' * 60}")
-print(f"GRAND TOTAL (API calls) : {grand_total:,}")
-print(f"WRITTEN TO DELTA        : {total:,}")
-print(f"{'=' * 60}")
+    log("DLT", "fetch complete -- yielding to dlt", {"total": total})
+    yield from all_rows
+    log("DLT", "yield done", {"total": total})
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Pipeline
+
+# COMMAND ----------
+
+os.makedirs(".dlt", exist_ok=True)
+with open(".dlt/config.toml", "w") as f:
+    f.write(f'[destination.filesystem]\nbucket_url = "{BRONZE_PATH}"\n')
+
+pipeline = dlt.pipeline(
+    pipeline_name = hubeau_cfg["pipeline_name"],
+    destination   = "filesystem",
+    dataset_name  = hubeau_cfg["dataset_name"],
+    progress      = False,
+)
+
+log("PIPELINE", "start")
+
+result = pipeline.run(water_quality(), table_format=hubeau_cfg["file_format"])
+
+log("PIPELINE", "end", {"result": str(result)})
 
 # COMMAND ----------
 
@@ -453,24 +364,23 @@ print(f"{'=' * 60}")
 
 # COMMAND ----------
 
-df = spark.read.format("delta").load(BRONZE_PATH)
+import pandas as pd
+import glob
 
-partitions = sorted([
-    r.annee_partition
-    for r in df.select("annee_partition").distinct().collect()
-    if r.annee_partition
-])
+table_path = f"{BRONZE_PATH}/{hubeau_cfg['dataset_name']}/water_quality"
+files      = glob.glob(f"{table_path}/**/*.parquet", recursive=True)
 
-print("=" * 50)
-print("BRONZE VALIDATION")
-print("=" * 50)
-print(f"  Rows        : {df.count():,}")
-print(f"  Partitions  : {partitions}")
-print(f"  Departments : {df.select('code_departement').distinct().count()}")
-print(f"  Communes    : {df.select('code_commune').distinct().count()}")
-print(f"  Parameters  : {df.select('libelle_parametre').distinct().count()}")
-print("=" * 50)
-
-df.show(10, truncate=True)
+if files:
+    df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+    log("VALIDATION", "bronze summary", {
+        "rows"       : len(df),
+        "columns"    : len(df.columns),
+        "departments": df["code_departement"].nunique(),
+        "communes"   : df["code_commune"].nunique(),
+        "parameters" : df["libelle_parametre"].nunique(),
+        "delta_log"  : "present" if os.path.exists(f"{table_path}/_delta_log") else "MISSING",
+    })
+else:
+    log("VALIDATION", "no parquet files found")
 
 # COMMAND ----------
