@@ -250,7 +250,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "delta-spark" },
     { name = "dlt", extra = ["deltalake"] },
-    { name = "great-expectations" },
+    { name = "great-expectations", extra = ["spark"] },
     { name = "ipykernel" },
     { name = "jupyter" },
     { name = "pandas" },
@@ -270,7 +270,7 @@ dev = [
 requires-dist = [
     { name = "delta-spark", specifier = "==3.2.0" },
     { name = "dlt", extras = ["deltalake"], specifier = ">=1.26.0" },
-    { name = "great-expectations", specifier = ">=1.17.1" },
+    { name = "great-expectations", extras = ["spark"], specifier = ">=1.17.1" },
     { name = "ipykernel", specifier = ">=7.2.0" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "pandas", specifier = ">=3.0.2" },
@@ -743,6 +743,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/5f/e2b3130b3cfcda3794a3f60be334d47c8d3c9296eade135db2397297e423/great_expectations-1.17.1.tar.gz", hash = "sha256:ee5dd510d8897bff6bbee83d049c1334b90b126b80e6e5a96b519a1afcccb0f9", size = 36340875, upload-time = "2026-05-05T09:09:42.48Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b6/60/6fa149384f910eb478967b37303a1011c39b2d72eb9285e411262b4befda/great_expectations-1.17.1-py3-none-any.whl", hash = "sha256:c69baa45e4260c858487467a9a0a2b18252ee305a8c8880baaff4ea9e2b78c25", size = 4951917, upload-time = "2026-05-05T09:09:38.061Z" },
+]
+
+[package.optional-dependencies]
+spark = [
+    { name = "pyspark" },
 ]
 
 [[package]]
