@@ -1,3 +1,9 @@
+## [1.4.0](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.3.0...v1.4.0) (2026-05-07)
+
+### Features
+
+* expose gold layer via FastAPI REST endpoints with Swagger UI ([6abc511](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/6abc511f2c76e5ed5039e03d3d44439cebf22289))
+
 ## [1.3.0](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.2.0...v1.3.0) (2026-05-07)
 
 ### Features
