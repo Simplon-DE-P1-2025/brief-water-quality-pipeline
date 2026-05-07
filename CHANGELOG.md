@@ -1,3 +1,16 @@
+## [1.2.0](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.1.0...v1.2.0) (2026-05-07)
+
+### Features
+
+* gold layer with 4 analytical tables and unit tests ([f810a4a](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/f810a4a187376d2aa8a38f827ad7746ae8a45759))
+* gold layer with conformite, parametres risks, commune stats and evolution mensuelle ([da0df20](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/da0df203bffd1568a29fd58a8183b11ad2c1984d))
+
+### Bug Fixes
+
+* remove unused imports in gold transform and tests ([55f84f1](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/55f84f1d40126977ac94f168effbba10b8627981))
+* skip Spark tests in CI due to Maven network restrictions ([f4e560e](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/f4e560ec76edecd4c01da886f074043aa9c4fc94))
+* wrap gold notebook execution in _NOTEBOOK_RUN guard for testability ([cb69826](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/cb69826b9d2a905864e12e830537b9c75941a4bd))
+
 ## [1.1.0](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.0.1...v1.1.0) (2026-05-06)
 
 ### Features
