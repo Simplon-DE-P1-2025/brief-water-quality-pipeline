@@ -1,3 +1,13 @@
+## [1.3.0](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.2.0...v1.3.0) (2026-05-07)
+
+### Features
+
+* data quality validation with Great Expectations - 61 expectations all passed ([116acef](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/116acef407ad6bc9c2555a9e7da5725b224045eb))
+
+### Bug Fixes
+
+* remove unused imports and variables in data quality script ([29f1e0d](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/commit/29f1e0df43629515c7c1f849acca0fae824bfd22))
+
 ## [1.2.0](https://github.com/Simplon-DE-P1-2025/brief-water-quality-pipeline/compare/v1.1.0...v1.2.0) (2026-05-07)
 
 ### Features
