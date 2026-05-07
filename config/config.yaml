@@ -163,3 +163,51 @@ silver:
     - conformite_pc
     - conformite_ref_bact
     - conformite_ref_pc
+
+# =========================================================
+# GOLD
+# =========================================================
+gold:
+
+  spark:
+    app_name:           "gold_transform"
+    driver_memory:      "4g"
+    shuffle_partitions: 8
+
+  paths:
+    local:
+      silver: "data/silver"
+      gold:   "data/gold"
+    databricks:
+      silver: "dbfs:/mnt/silver"
+      gold:   "dbfs:/mnt/gold"
+
+  # ── Tables Gold ───────────────────────────────────────
+  tables:
+
+    conformite_dept:
+      output_table: "gold_conformite_dept"
+      partition_by: ["annee"]
+      description:  "Taux de conformité agrégé par département et année"
+
+    parametres_risks:
+      output_table: "gold_parametres_risks"
+      partition_by: ["annee"]
+      description:  "Top paramètres non conformes par département"
+
+    commune_stats:
+      output_table: "gold_commune_stats"
+      partition_by: ["annee"]
+      description:  "Statistiques qualité eau par commune"
+
+    evolution_mensuelle:
+      output_table: "gold_evolution_mensuelle"
+      partition_by: ["annee"]
+      description:  "Évolution mensuelle du taux de conformité"
+
+  # ── Databricks uniquement ─────────────────────────────
+  databricks:
+    catalog:   "main"
+    database:  "gold"
+    # Local : Delta fichiers  → data/gold/<table>
+    # Databricks : saveAsTable → main.gold.<table>
