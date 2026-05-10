@@ -42,8 +42,9 @@ from pyspark.sql import SparkSession
 
 _current_table = None
 
+
 def log(stage, msg, extra=None):
-    ts  = datetime.now().strftime("%H:%M:%S")
+    ts = datetime.now().strftime("%H:%M:%S")
     ctx = f"table={_current_table if _current_table else '-'}"
     extras = (
         " | " + ", ".join(f"{k}={v}" for k, v in extra.items())
@@ -57,6 +58,7 @@ def log(stage, msg, extra=None):
 
 # COMMAND ----------
 
+
 def load_config():
     """Charge config.yaml selon l'environnement (local ou Databricks)."""
     if "DATABRICKS_RUNTIME_VERSION" in os.environ:
@@ -68,11 +70,11 @@ def load_config():
         return yaml.safe_load(f)
 
 
-cfg        = load_config()
-geo_cfg    = cfg["pipelines"]["geo"]
-uc_cfg     = cfg["unity_catalog"]
-storage    = cfg["storage"]
-secrets    = storage["secrets"]
+cfg = load_config()
+geo_cfg = cfg["pipelines"]["geo"]
+uc_cfg = cfg["unity_catalog"]
+storage = cfg["storage"]
+secrets = storage["secrets"]
 
 IS_DATABRICKS = (
     cfg["environment"]["is_databricks"]
@@ -80,12 +82,12 @@ IS_DATABRICKS = (
 )
 
 # ── Paramètres Unity Catalog ───────────────────────────────────────────────
-CATALOG         = uc_cfg["catalog"]
-SCHEMA          = uc_cfg["schema"]
+CATALOG = uc_cfg["catalog"]
+SCHEMA = uc_cfg["schema"]
 
 # ── Paramètres storage ─────────────────────────────────────────────────────
 STORAGE_ACCOUNT = storage["account_name"]
-SECRETS_SCOPE   = secrets["scope"]
+SECRETS_SCOPE = secrets["scope"]
 SECRET_KEY_NAME = secrets["storage_account_key"]
 
 BRONZE_BASE = (
@@ -95,14 +97,14 @@ BRONZE_BASE = (
 )
 
 # ── Paramètres API ─────────────────────────────────────────────────────────
-BASE           = geo_cfg["base_url"]
+BASE = geo_cfg["base_url"]
 COMMUNE_FIELDS = geo_cfg["commune_fields"]
-LIMIT          = geo_cfg["limits"]["communes_limit"]
+LIMIT = geo_cfg["limits"]["communes_limit"]
 
 log("CONFIG", "loaded", {
-    "env":     "databricks" if IS_DATABRICKS else "local",
+    "env": "databricks" if IS_DATABRICKS else "local",
     "catalog": f"{CATALOG}.{SCHEMA}",
-    "base":    BASE,
+    "base": BASE,
 })
 
 # COMMAND ----------
@@ -122,6 +124,7 @@ log("SPARK", "session ready")
 
 # COMMAND ----------
 
+
 def fetch(url, params=None):
     """Appel API avec gestion d'erreur."""
     try:
@@ -139,6 +142,7 @@ def fetch(url, params=None):
 
 # COMMAND ----------
 
+
 def fetch_regions():
     """Récupère toutes les régions françaises."""
     global _current_table
@@ -150,8 +154,8 @@ def fetch_regions():
     rows = [
         {
             "code_region": r["code"],
-            "nom_region":  r["nom"],
-            "source":      "geo.api.gouv.fr",
+            "nom_region": r["nom"],
+            "source": "geo.api.gouv.fr",
         }
         for r in data
     ]
@@ -171,9 +175,9 @@ def fetch_departements():
     rows = [
         {
             "code_departement": d["code"],
-            "nom_departement":  d["nom"],
-            "code_region":      d.get("codeRegion"),
-            "source":           "geo.api.gouv.fr",
+            "nom_departement": d["nom"],
+            "code_region": d.get("codeRegion"),
+            "source": "geo.api.gouv.fr",
         }
         for d in data
     ]
@@ -197,14 +201,14 @@ def fetch_communes():
     for c in data:
         coords = (c.get("centre") or {}).get("coordinates", [None, None])
         rows.append({
-            "code_commune":    c["code"],
-            "nom_commune":     c["nom"],
+            "code_commune": c["code"],
+            "nom_commune": c["nom"],
             "code_departement": c.get("codeDepartement"),
-            "code_region":     c.get("codeRegion"),
-            "longitude":       coords[0],
-            "latitude":        coords[1],
-            "population":      c.get("population"),
-            "source":          "geo.api.gouv.fr",
+            "code_region": c.get("codeRegion"),
+            "longitude": coords[0],
+            "latitude": coords[1],
+            "population": c.get("population"),
+            "source": "geo.api.gouv.fr",
         })
 
     log("COMMUNES", "done", {"rows": len(rows)})
@@ -216,6 +220,7 @@ def fetch_communes():
 # MAGIC ## Écriture Delta — Unity Catalog + ADLS Gen2
 
 # COMMAND ----------
+
 
 def write_table(rows, table_name):
     """
@@ -231,7 +236,7 @@ def write_table(rows, table_name):
         return
 
     table_full = f"{CATALOG}.{SCHEMA}.{table_name}"
-    adls_path  = f"{BRONZE_BASE}/{table_name}/"
+    adls_path = f"{BRONZE_BASE}/{table_name}/"
 
     log("WRITE", "creating spark dataframe", {"rows": len(rows)})
     pdf = pd.DataFrame(rows)
@@ -270,6 +275,7 @@ def write_table(rows, table_name):
 
 # COMMAND ----------
 
+
 def validate():
     """Affiche un résumé des 3 tables écrites dans Unity Catalog."""
     for table_name in ["regions", "departements", "communes"]:
@@ -278,8 +284,8 @@ def validate():
             df = spark.read.table(table_full)
             log("VALIDATION", "summary", {
                 "table": table_full,
-                "rows":  df.count(),
-                "cols":  len(df.columns),
+                "rows": df.count(),
+                "cols": len(df.columns),
             })
         except Exception as e:
             log("VALIDATION", "error", {"table": table_full, "error": str(e)})
@@ -290,6 +296,7 @@ def validate():
 # MAGIC ## Exécution
 
 # COMMAND ----------
+
 
 if __name__ == "__main__":
     # Régions
@@ -308,7 +315,8 @@ if __name__ == "__main__":
     validate()
 
     log("PIPELINE", "geo ingestion complete", {
-        "regions":      len(regions_rows),
+        "regions": len(regions_rows),
         "departements": len(departements_rows),
-        "communes":     len(communes_rows),
+        "communes": len(communes_rows),
     })
+

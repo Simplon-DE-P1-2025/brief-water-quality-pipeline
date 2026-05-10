@@ -38,6 +38,7 @@ from pyspark.sql import SparkSession
 
 # COMMAND ----------
 
+
 def log(stage, msg, dept=None, year=None, month=None, extra=None):
     ts = datetime.now().strftime("%H:%M:%S")
     ctx = (
@@ -57,6 +58,7 @@ def log(stage, msg, dept=None, year=None, month=None, extra=None):
 
 # COMMAND ----------
 
+
 def get_departments():
     """Retourne la liste complète des codes départements français."""
     return (
@@ -72,6 +74,7 @@ def get_departments():
 # MAGIC ## Config
 
 # COMMAND ----------
+
 
 def load_config():
     """Charge config.yaml selon l'environnement (local ou Databricks)."""
@@ -92,18 +95,18 @@ def resolve_scope(cfg):
     if depts == "DEFAULT_FRANCE":
         depts = get_departments()
     return {
-        "years":       scope["years"],
+        "years": scope["years"],
         "departments": depts,
         "max_workers": scope["max_workers"],
         "active_mode": active,
     }
 
 
-cfg        = load_config()
+cfg = load_config()
 hubeau_cfg = cfg["pipelines"]["hubeau"]
-uc_cfg     = cfg["unity_catalog"]
-storage    = cfg["storage"]
-secrets    = storage["secrets"]
+uc_cfg = cfg["unity_catalog"]
+storage = cfg["storage"]
+secrets = storage["secrets"]
 
 IS_DATABRICKS = (
     cfg["environment"]["is_databricks"]
@@ -111,15 +114,15 @@ IS_DATABRICKS = (
 )
 
 # ── Paramètres Unity Catalog (depuis config.yaml) ──────────────────────────
-CATALOG         = uc_cfg["catalog"]
-SCHEMA          = uc_cfg["schema"]
-TABLE_NAME      = uc_cfg["table"]
+CATALOG = uc_cfg["catalog"]
+SCHEMA = uc_cfg["schema"]
+TABLE_NAME = uc_cfg["table"]
 TABLE_FULL_NAME = f"{CATALOG}.{SCHEMA}.{TABLE_NAME}"
 
 # ── Paramètres storage (depuis config.yaml) ────────────────────────────────
-STORAGE_ACCOUNT  = storage["account_name"]
-SECRETS_SCOPE    = secrets["scope"]
-SECRET_KEY_NAME  = secrets["storage_account_key"]
+STORAGE_ACCOUNT = storage["account_name"]
+SECRETS_SCOPE = secrets["scope"]
+SECRET_KEY_NAME = secrets["storage_account_key"]
 
 BRONZE_BASE = (
     storage["bronze"]["databricks"]
@@ -128,23 +131,23 @@ BRONZE_BASE = (
 )
 
 # ── Paramètres API ─────────────────────────────────────────────────────────
-scope        = resolve_scope(cfg)
-YEARS        = scope["years"]
-DEPARTMENTS  = scope["departments"]
-MAX_WORKERS  = scope["max_workers"]
-API_URL      = hubeau_cfg["api_url"]
-MAX_DEPTH    = hubeau_cfg["max_depth"]
-MAX_RETRIES  = hubeau_cfg["max_retries"]
-SLEEP_S      = hubeau_cfg["pagination"]["sleep_between_requests"]
-END_DAY      = hubeau_cfg["date_format"]["end_of_day_suffix"]
-FORCE_EOD    = hubeau_cfg["date_format"]["force_end_of_day"]
+scope = resolve_scope(cfg)
+YEARS = scope["years"]
+DEPARTMENTS = scope["departments"]
+MAX_WORKERS = scope["max_workers"]
+API_URL = hubeau_cfg["api_url"]
+MAX_DEPTH = hubeau_cfg["max_depth"]
+MAX_RETRIES = hubeau_cfg["max_retries"]
+SLEEP_S = hubeau_cfg["pagination"]["sleep_between_requests"]
+END_DAY = hubeau_cfg["date_format"]["end_of_day_suffix"]
+FORCE_EOD = hubeau_cfg["date_format"]["force_end_of_day"]
 
 log("CONFIG", "loaded", extra={
-    "env":     "databricks" if IS_DATABRICKS else "local",
-    "mode":    scope["active_mode"],
+    "env": "databricks" if IS_DATABRICKS else "local",
+    "mode": scope["active_mode"],
     "catalog": TABLE_FULL_NAME,
-    "depts":   len(DEPARTMENTS),
-    "years":   len(YEARS),
+    "depts": len(DEPARTMENTS),
+    "years": len(YEARS),
     "workers": MAX_WORKERS,
 })
 
@@ -165,12 +168,13 @@ log("SPARK", "session ready")
 
 # COMMAND ----------
 
+
 def build_params(dept, d_min, d_max):
     """Construit les paramètres de l'appel Hub'Eau."""
     if FORCE_EOD and "T" not in str(d_max):
         d_max = f"{d_max}{END_DAY}"
     return {
-        "code_departement":     dept,
+        "code_departement": dept,
         "date_min_prelevement": d_min,
         "date_max_prelevement": d_max,
         "size": MAX_DEPTH,
@@ -205,6 +209,7 @@ def fetch(params, dept=None, year=None, month=None):
 
 # COMMAND ----------
 
+
 def get_weeks(year, month):
     """Retourne les paires (d_min, d_max) par semaine."""
     last = calendar.monthrange(year, month)[1]
@@ -225,7 +230,14 @@ def get_weeks(year, month):
 def fetch_by_week(dept, year, month):
     records = []
     for d_min, d_max in get_weeks(year, month):
-        data = fetch(build_params(dept, d_min, d_max), dept=dept, year=year, month=month)
+        data = fetch(
+            build_params(
+                dept,
+                d_min,
+                d_max),
+            dept=dept,
+            year=year,
+            month=month)
         rows = data.get("data", [])
         log("WEEK", f"{d_min} -> {d_max}", dept=dept, year=year, month=month,
             extra={"rows": len(rows)})
@@ -235,10 +247,17 @@ def fetch_by_week(dept, year, month):
 
 
 def fetch_by_month(dept, year, month):
-    last  = calendar.monthrange(year, month)[1]
+    last = calendar.monthrange(year, month)[1]
     d_min = f"{year}-{month:02d}-01"
     d_max = f"{year}-{month:02d}-{last:02d}"
-    data  = fetch(build_params(dept, d_min, d_max), dept=dept, year=year, month=month)
+    data = fetch(
+        build_params(
+            dept,
+            d_min,
+            d_max),
+        dept=dept,
+        year=year,
+        month=month)
     count = data.get("count", 0)
     if count == 0:
         return []
@@ -246,14 +265,15 @@ def fetch_by_month(dept, year, month):
         log("MONTH", "split by week", dept=dept, year=year, month=month,
             extra={"count": count})
         return fetch_by_week(dept, year, month)
-    log("MONTH", "ok", dept=dept, year=year, month=month, extra={"rows": count})
+    log("MONTH", "ok", dept=dept, year=year,
+        month=month, extra={"rows": count})
     return data.get("data", [])
 
 
 QUARTERS = [
-    (1,  3,  f"01-01", f"03-31"),
-    (4,  6,  f"04-01", f"06-30"),
-    (7,  9,  f"07-01", f"09-30"),
+    (1, 3, f"01-01", f"03-31"),
+    (4, 6, f"04-01", f"06-30"),
+    (7, 9, f"07-01", f"09-30"),
     (10, 12, f"10-01", f"12-31"),
 ]
 
@@ -263,7 +283,7 @@ def fetch_by_quarter(dept, year):
     for m_start, m_end, q_start, q_end in QUARTERS:
         d_min = f"{year}-{q_start}"
         d_max = f"{year}-{q_end}"
-        data  = fetch(build_params(dept, d_min, d_max), dept=dept, year=year)
+        data = fetch(build_params(dept, d_min, d_max), dept=dept, year=year)
         count = data.get("count", 0)
         if count == 0:
             continue
@@ -281,8 +301,8 @@ def fetch_by_quarter(dept, year):
 
 
 def fetch_year(dept, year):
-    data  = fetch(build_params(dept, f"{year}-01-01", f"{year}-12-31"),
-                  dept=dept, year=year)
+    data = fetch(build_params(dept, f"{year}-01-01", f"{year}-12-31"),
+                 dept=dept, year=year)
     count = data.get("count", 0)
     if count == 0:
         log("YEAR", "no data", dept=dept, year=year)
@@ -290,7 +310,8 @@ def fetch_year(dept, year):
     if count <= MAX_DEPTH:
         log("YEAR", "ok", dept=dept, year=year, extra={"rows": count})
         return dept, year, data.get("data", [])
-    log("YEAR", "split by quarter", dept=dept, year=year, extra={"count": count})
+    log("YEAR", "split by quarter", dept=dept,
+        year=year, extra={"count": count})
     return dept, year, fetch_by_quarter(dept, year)
 
 # COMMAND ----------
@@ -299,6 +320,7 @@ def fetch_year(dept, year):
 # MAGIC ## Transform
 
 # COMMAND ----------
+
 
 def prepare_record(rec, yr):
     """Enrichit un enregistrement brut de l'API."""
@@ -318,11 +340,13 @@ def prepare_record(rec, yr):
 
 # COMMAND ----------
 
+
 def run_pipeline():
-    tasks   = [(d, y) for d in DEPARTMENTS for y in YEARS]
+    tasks = [(d, y) for d in DEPARTMENTS for y in YEARS]
     all_rows = []
-    total   = 0
-    log("PIPELINE", "start", extra={"tasks": len(tasks), "workers": MAX_WORKERS})
+    total = 0
+    log("PIPELINE", "start", extra={
+        "tasks": len(tasks), "workers": MAX_WORKERS})
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {
@@ -337,7 +361,7 @@ def run_pipeline():
                 log("PIPELINE", "task failed", dept=dept, year=year,
                     extra={"error": str(exc)})
                 continue
-            rows   = [prepare_record(r, year) for r in rows]
+            rows = [prepare_record(r, year) for r in rows]
             total += len(rows)
             all_rows.extend(rows)
             log("PIPELINE", "task done", dept=dept, year=year,
@@ -352,6 +376,7 @@ def run_pipeline():
 # MAGIC ## Écriture Delta — Unity Catalog
 
 # COMMAND ----------
+
 
 def write_delta(rows):
     """Écrit en Unity Catalog ET dans le container bronze ADLS."""
@@ -377,7 +402,7 @@ def write_delta(rows):
 
     # ── 2. ADLS Gen2 container bronze (partitionné) ───────────
     storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)
-    adls_path   = f"{BRONZE_BASE}/water_quality/"
+    adls_path = f"{BRONZE_BASE}/water_quality/"
 
     (
         sdf.write
@@ -396,17 +421,18 @@ def write_delta(rows):
 
 # COMMAND ----------
 
+
 def validate(table_name):
     """Affiche un résumé de la table Delta écrite."""
     df = spark.read.table(table_name)
     log("VALIDATION", "delta summary", extra={
-        "table":       table_name,
-        "rows":        df.count(),
-        "columns":     len(df.columns),
+        "table": table_name,
+        "rows": df.count(),
+        "columns": len(df.columns),
         "departments": df.select("code_departement").distinct().count(),
-        "communes":    df.select("code_commune").distinct().count(),
-        "parameters":  df.select("libelle_parametre").distinct().count(),
-        "partitions":  df.select("annee_partition").distinct().count(),
+        "communes": df.select("code_commune").distinct().count(),
+        "parameters": df.select("libelle_parametre").distinct().count(),
+        "partitions": df.select("annee_partition").distinct().count(),
     })
 
 # COMMAND ----------
@@ -415,6 +441,7 @@ def validate(table_name):
 # MAGIC ## Exécution
 
 # COMMAND ----------
+
 
 if __name__ == "__main__":
     rows = run_pipeline()
