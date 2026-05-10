@@ -64,7 +64,7 @@ def load_config():
     if "DATABRICKS_RUNTIME_VERSION" in os.environ:
         base_dir = "/Workspace/Users/krhazlani.ext@simplonformations.co/brief-water-quality-pipeline"
     else:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     config_path = os.path.join(base_dir, "config/config.yaml")
     with open(config_path) as f:
         return yaml.safe_load(f)
@@ -254,7 +254,7 @@ def write_table(rows, table_name):
     log("WRITE", "unity catalog written", {"table": table_full})
 
     # ── 2. ADLS Gen2 container bronze ─────────────────────────────────────
-    storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)
+    storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)  # noqa: F821
 
     (
         sdf.write
@@ -298,25 +298,23 @@ def validate():
 # COMMAND ----------
 
 
-if __name__ == "__main__":
-    # Régions
-    regions_rows = fetch_regions()
-    write_table(regions_rows, "regions")
+# Régions
+regions_rows = fetch_regions()
+write_table(regions_rows, "regions")
 
-    # Départements
-    departements_rows = fetch_departements()
-    write_table(departements_rows, "departements")
+# Départements
+departements_rows = fetch_departements()
+write_table(departements_rows, "departements")
 
-    # Communes
-    communes_rows = fetch_communes()
-    write_table(communes_rows, "communes")
+# Communes
+communes_rows = fetch_communes()
+write_table(communes_rows, "communes")
 
-    # Validation
-    validate()
+# Validation
+validate()
 
-    log("PIPELINE", "geo ingestion complete", {
-        "regions": len(regions_rows),
-        "departements": len(departements_rows),
-        "communes": len(communes_rows),
-    })
-
+log("PIPELINE", "geo ingestion complete", {
+    "regions": len(regions_rows),
+    "departements": len(departements_rows),
+    "communes": len(communes_rows),
+})

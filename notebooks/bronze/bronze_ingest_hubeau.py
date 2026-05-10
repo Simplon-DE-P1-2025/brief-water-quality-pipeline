@@ -81,7 +81,7 @@ def load_config():
     if "DATABRICKS_RUNTIME_VERSION" in os.environ:
         base_dir = "/Workspace/Users/krhazlani.ext@simplonformations.co/brief-water-quality-pipeline"
     else:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     config_path = os.path.join(base_dir, "config/config.yaml")
     with open(config_path) as f:
         return yaml.safe_load(f)
@@ -115,8 +115,8 @@ IS_DATABRICKS = (
 
 # ── Paramètres Unity Catalog (depuis config.yaml) ──────────────────────────
 CATALOG = uc_cfg["catalog"]
-SCHEMA = uc_cfg["schema"]
-TABLE_NAME = uc_cfg["table"]
+SCHEMA = uc_cfg["bronze"]["schema"]
+TABLE_NAME = uc_cfg["bronze"]["table"]
 TABLE_FULL_NAME = f"{CATALOG}.{SCHEMA}.{TABLE_NAME}"
 
 # ── Paramètres storage (depuis config.yaml) ────────────────────────────────
@@ -271,10 +271,10 @@ def fetch_by_month(dept, year, month):
 
 
 QUARTERS = [
-    (1, 3, f"01-01", f"03-31"),
-    (4, 6, f"04-01", f"06-30"),
-    (7, 9, f"07-01", f"09-30"),
-    (10, 12, f"10-01", f"12-31"),
+    (1, 3, "01-01", "03-31"),
+    (4, 6, "04-01", "06-30"),
+    (7, 9, "07-01", "09-30"),
+    (10, 12, "10-01", "12-31"),
 ]
 
 
@@ -401,7 +401,7 @@ def write_delta(rows):
     log("WRITE", "unity catalog written", extra={"table": TABLE_FULL_NAME})
 
     # ── 2. ADLS Gen2 container bronze (partitionné) ───────────
-    storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)
+    storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)  # noqa: F821
     adls_path = f"{BRONZE_BASE}/water_quality/"
 
     (
@@ -449,4 +449,3 @@ if __name__ == "__main__":
     validate(TABLE_FULL_NAME)
 
     log("PIPELINE", "end", extra={"rows": len(rows)})
-
