@@ -449,4 +449,3 @@ if __name__ == "__main__":
     validate(TABLE_FULL_NAME)
 
     log("PIPELINE", "end", extra={"rows": len(rows)})
-

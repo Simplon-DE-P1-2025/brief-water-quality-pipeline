@@ -318,4 +318,3 @@ log("PIPELINE", "geo ingestion complete", {
     "departements": len(departements_rows),
     "communes": len(communes_rows),
 })
-
