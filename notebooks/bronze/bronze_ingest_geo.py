@@ -64,7 +64,7 @@ def load_config():
     if "DATABRICKS_RUNTIME_VERSION" in os.environ:
         base_dir = "/Workspace/Users/krhazlani.ext@simplonformations.co/brief-water-quality-pipeline"
     else:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     config_path = os.path.join(base_dir, "config/config.yaml")
     with open(config_path) as f:
         return yaml.safe_load(f)
