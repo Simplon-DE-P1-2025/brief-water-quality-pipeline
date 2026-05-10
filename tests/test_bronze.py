@@ -4,7 +4,7 @@ Tests cover config loading, department generation, scope resolution,
 and record preparation — without making real API calls.
 """
 
-from notebooks.bronze.ingestion_hubeau import (
+from notebooks.bronze.bronze_ingest_hubeau import (
     get_departments,
     resolve_scope,
     prepare_record,
@@ -171,7 +171,7 @@ def test_prepare_record_keeps_strings():
 def test_build_params_appends_end_of_day():
     """date_max without time should get T23:59:59Z appended."""
     # Temporarily patch globals
-    import notebooks.bronze.ingestion_hubeau as m
+    import notebooks.bronze.bronze_ingest_hubeau as m
     original_force = m.FORCE_EOD
     original_end = m.END_DAY
     m.FORCE_EOD = True
@@ -186,7 +186,7 @@ def test_build_params_appends_end_of_day():
 
 def test_build_params_does_not_double_append():
     """date_max already containing T should not be modified."""
-    import notebooks.bronze.ingestion_hubeau as m
+    import notebooks.bronze.bronze_ingest_hubeau as m
     original_force = m.FORCE_EOD
     original_end = m.END_DAY
     m.FORCE_EOD = True
@@ -200,7 +200,7 @@ def test_build_params_does_not_double_append():
 
 
 def test_build_params_structure():
-    import notebooks.bronze.ingestion_hubeau as m
+    import notebooks.bronze.bronze_ingest_hubeau as m
     params = build_params("75", "2024-06-01", "2024-06-30T23:59:59Z")
     assert params["code_departement"] == "75"
     assert params["date_min_prelevement"] == "2024-06-01"
