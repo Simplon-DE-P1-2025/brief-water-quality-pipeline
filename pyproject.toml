@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "databricks-cli>=0.18.0",
     "delta-spark==3.2.0",
     "dlt[deltalake]>=1.26.0",
     "fastapi>=0.136.1",
@@ -28,3 +29,6 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "spark: marks tests that require a Spark session (deselect with -m 'not spark')",
+]
