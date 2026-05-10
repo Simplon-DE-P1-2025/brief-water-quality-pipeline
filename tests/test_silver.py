@@ -269,6 +269,7 @@ class TestGetPaths:
 # 2 — clean()
 # =========================================================
 
+@pytest.mark.spark
 class TestClean:
     DEDUP_KEYS = ["code_prelevement", "code_parametre", "code_lieu_analyse"]
 
@@ -352,6 +353,7 @@ class TestClean:
 # 3 — standardize()
 # =========================================================
 
+@pytest.mark.spark
 class TestStandardize:
     """standardize() attend un DF déjà nettoyé par clean()."""
 
@@ -428,6 +430,7 @@ class TestStandardize:
 # 4 — enrich_categories()
 # =========================================================
 
+@pytest.mark.spark
 class TestEnrichCategories:
     CATS = {"N": "Physicochimique", "O": "Organoleptique"}
     SOUS = {
@@ -519,6 +522,7 @@ class TestEnrichCategories:
 # 5 — enrich_conformite()
 # =========================================================
 
+@pytest.mark.spark
 class TestEnrichConformite:
     def _df(self, conformite_globale: str):
         s = spark()
@@ -638,6 +642,7 @@ class TestSelectOutputColumns:
 # 7 — enrich_geo()
 # =========================================================
 
+@pytest.mark.spark
 class TestEnrichGeo:
     def _dfs(self):
         s = spark()

@@ -230,6 +230,7 @@ class TestGetPaths:
 # 2 — build_conformite_dept()
 # =========================================================
 
+@pytest.mark.spark
 class TestBuildConformiteDept:
     def test_returns_expected_columns(self):
         df = make_silver_df([base_row()])
@@ -295,6 +296,7 @@ class TestBuildConformiteDept:
 # 3 — build_parametres_risks()
 # =========================================================
 
+@pytest.mark.spark
 class TestBuildParametresRisks:
     def test_returns_expected_columns(self):
         df = make_silver_df([
@@ -375,6 +377,7 @@ class TestBuildParametresRisks:
 # 4 — build_commune_stats()
 # =========================================================
 
+@pytest.mark.spark
 class TestBuildCommuneStats:
     def test_returns_expected_columns(self):
         df = make_silver_df([base_row()])
@@ -445,6 +448,7 @@ class TestBuildCommuneStats:
 # 5 — build_evolution_mensuelle()
 # =========================================================
 
+@pytest.mark.spark
 class TestBuildEvolutionMensuelle:
     def test_returns_expected_columns(self):
         df = make_silver_df([base_row()])
@@ -505,6 +509,7 @@ class TestBuildEvolutionMensuelle:
 # 6 — write_gold()
 # =========================================================
 
+@pytest.mark.spark
 class TestWriteGold:
     TABLES_CFG = {
         "conformite_dept": {
