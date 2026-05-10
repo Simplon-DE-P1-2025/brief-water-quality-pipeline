@@ -21,9 +21,47 @@ environment:
 # STORAGE
 # =========================================================
 storage:
+  account_name: "sawaterquality"
+
   bronze:
     local:      "data"
-    databricks: "dbfs:/mnt/bronze"
+    databricks: "abfss://bronze@sawaterquality.dfs.core.windows.net"
+
+  quality:
+    databricks:      "abfss://quality@sawaterquality.dfs.core.windows.net"
+    local:           "data/quality"
+    reports_dir:     "reports"
+    report_filename: "report_{ts}.json"
+
+  secrets:
+    scope:               "waterquality"
+    storage_account_key: "storage-account-key"
+    sas_token:           "sas-token"
+
+
+# =========================================================
+# UNITY CATALOG
+# =========================================================
+unity_catalog:
+  catalog: "databricks_waterquality"
+
+  bronze:
+    schema: "bronze"
+    table:  "water_quality"
+
+  silver:
+    schema: "silver"
+    table:  "water_quality"
+
+  geo:
+    schema:       "bronze"
+    regions:      "regions"
+    departements: "departements"
+    communes:     "communes"
+
+  quality:
+    schema: "quality"
+    table:  "quality_reports"
 
 
 # =========================================================
@@ -96,8 +134,8 @@ silver:
       bronze: "data/bronze"
       silver: "data/silver"
     databricks:
-      bronze: "dbfs:/mnt/bronze"
-      silver: "dbfs:/mnt/silver"
+      bronze: "abfss://bronze@sawaterquality.dfs.core.windows.net"
+      silver: "abfss://silver@sawaterquality.dfs.core.windows.net"
 
   dedup_keys:
     - "code_prelevement"
@@ -108,7 +146,6 @@ silver:
     - "annee"
     - "code_departement"
 
-  # Mapping code_type_parametre → libellé catégorie (doc SISE-Eaux)
   categories:
     B: "Microbiologique"
     P: "Physico-chimique"
@@ -116,7 +153,6 @@ silver:
     N: "Physicochimique"
     O: "Organoleptique"
 
-  # Sous-catégories par regex sur libelle_parametre
   sous_categories:
     "Azote":           "nitrate|nitrite|azote"
     "Pesticide":       "pesticide|herbicide|insecticide|atrazine"
@@ -126,7 +162,6 @@ silver:
     "Desinfection":    "chlore|chlorure|désinfect|desinfect"
     "Radiologique":    "radioactivité|radioactivite|tritium|césium|cesium"
 
-  # Colonnes finales du DataFrame Silver (ordre conservé)
   output_columns:
     - code_prelevement
     - reference_analyse
@@ -179,10 +214,9 @@ gold:
       silver: "data/silver"
       gold:   "data/gold"
     databricks:
-      silver: "dbfs:/mnt/silver"
-      gold:   "dbfs:/mnt/gold"
+      silver: "abfss://silver@sawaterquality.dfs.core.windows.net"
+      gold:   "abfss://gold@sawaterquality.dfs.core.windows.net"
 
-  # ── Tables Gold ───────────────────────────────────────
   tables:
 
     conformite_dept:
@@ -205,9 +239,6 @@ gold:
       partition_by: ["annee"]
       description:  "Évolution mensuelle du taux de conformité"
 
-  # ── Databricks uniquement ─────────────────────────────
   databricks:
-    catalog:   "main"
-    database:  "gold"
-    # Local : Delta fichiers  → data/gold/<table>
-    # Databricks : saveAsTable → main.gold.<table>
+    catalog:  "databricks_waterquality"
+    schema:   "gold"
