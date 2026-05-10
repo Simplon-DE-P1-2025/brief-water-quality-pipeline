@@ -102,9 +102,9 @@ COMMUNE_FIELDS = geo_cfg["commune_fields"]
 LIMIT = geo_cfg["limits"]["communes_limit"]
 
 log("CONFIG", "loaded", {
-    "env": "databricks" if IS_DATABRICKS else "local",
+    "env":     "databricks" if IS_DATABRICKS else "local",
     "catalog": f"{CATALOG}.{SCHEMA}",
-    "base": BASE,
+    "base":    BASE,
 })
 
 # COMMAND ----------
@@ -154,8 +154,8 @@ def fetch_regions():
     rows = [
         {
             "code_region": r["code"],
-            "nom_region": r["nom"],
-            "source": "geo.api.gouv.fr",
+            "nom_region":  r["nom"],
+            "source":      "geo.api.gouv.fr",
         }
         for r in data
     ]
@@ -175,9 +175,9 @@ def fetch_departements():
     rows = [
         {
             "code_departement": d["code"],
-            "nom_departement": d["nom"],
-            "code_region": d.get("codeRegion"),
-            "source": "geo.api.gouv.fr",
+            "nom_departement":  d["nom"],
+            "code_region":      d.get("codeRegion"),
+            "source":           "geo.api.gouv.fr",
         }
         for d in data
     ]
@@ -201,14 +201,14 @@ def fetch_communes():
     for c in data:
         coords = (c.get("centre") or {}).get("coordinates", [None, None])
         rows.append({
-            "code_commune": c["code"],
-            "nom_commune": c["nom"],
+            "code_commune":    c["code"],
+            "nom_commune":     c["nom"],
             "code_departement": c.get("codeDepartement"),
-            "code_region": c.get("codeRegion"),
-            "longitude": coords[0],
-            "latitude": coords[1],
-            "population": c.get("population"),
-            "source": "geo.api.gouv.fr",
+            "code_region":     c.get("codeRegion"),
+            "longitude":       coords[0],
+            "latitude":        coords[1],
+            "population":      c.get("population"),
+            "source":          "geo.api.gouv.fr",
         })
 
     log("COMMUNES", "done", {"rows": len(rows)})
@@ -254,7 +254,7 @@ def write_table(rows, table_name):
     log("WRITE", "unity catalog written", {"table": table_full})
 
     # ── 2. ADLS Gen2 container bronze ─────────────────────────────────────
-    storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)
+    storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)  # noqa: F821
 
     (
         sdf.write
@@ -284,8 +284,8 @@ def validate():
             df = spark.read.table(table_full)
             log("VALIDATION", "summary", {
                 "table": table_full,
-                "rows": df.count(),
-                "cols": len(df.columns),
+                "rows":  df.count(),
+                "cols":  len(df.columns),
             })
         except Exception as e:
             log("VALIDATION", "error", {"table": table_full, "error": str(e)})
@@ -297,26 +297,24 @@ def validate():
 
 # COMMAND ----------
 
+# Régions
+regions_rows = fetch_regions()
+write_table(regions_rows, "regions")
 
-if __name__ == "__main__":
-    # Régions
-    regions_rows = fetch_regions()
-    write_table(regions_rows, "regions")
+# Départements
+departements_rows = fetch_departements()
+write_table(departements_rows, "departements")
 
-    # Départements
-    departements_rows = fetch_departements()
-    write_table(departements_rows, "departements")
+# Communes
+communes_rows = fetch_communes()
+write_table(communes_rows, "communes")
 
-    # Communes
-    communes_rows = fetch_communes()
-    write_table(communes_rows, "communes")
+# Validation
+validate()
 
-    # Validation
-    validate()
-
-    log("PIPELINE", "geo ingestion complete", {
-        "regions": len(regions_rows),
-        "departements": len(departements_rows),
-        "communes": len(communes_rows),
-    })
+log("PIPELINE", "geo ingestion complete", {
+    "regions":      len(regions_rows),
+    "departements": len(departements_rows),
+    "communes":     len(communes_rows),
+})
 
