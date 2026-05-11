@@ -441,7 +441,7 @@ if __name__ == "__main__":
     tables = gold_cfg["tables"]
     catalog = uc_cfg["catalog"]
     gold_schema = gold_cfg.get("databricks", {}).get("schema", "gold")
-    
+
     schema = uc_cfg["silver"]["schema"]
     table = uc_cfg["silver"]["table"]
     silver_full = f"{catalog}.{schema}.{table}"
