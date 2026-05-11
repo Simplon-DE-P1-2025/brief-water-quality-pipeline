@@ -1,27 +1,39 @@
 # Databricks notebook source
-# %% [markdown]
-# # Silver Layer — Water Quality Pipeline
-#
-# Script modulaire — compatible **local** (PySpark standalone) et **Databricks**.
-# Configuration pilotée par `config/config.yaml` (section `silver`).
-#
-# Étapes :
-# 1. Config + détection environnement
-# 2. Session Spark
-# 3. Chargement Bronze
-# 4. Analyse exploratoire
-# 5. Nettoyage (dédup, nulls, types)
-# 6. Standardisation colonnes
-# 7. Enrichissement (géo, catégories, conformité)
-# 8. Sélection finale
-# 9. Écriture Silver (Delta, partitionné annee x département)
-# 10. Validation post-écriture
+# /// script
+# [tool.databricks.environment]
+# environment_version = "1"
+# dependencies = [
+#   "requests",
+#   "pyyaml",
+# ]
+# ///
+# MAGIC %md
+# MAGIC # Silver Layer — Water Quality Pipeline
+# MAGIC
+# MAGIC Script modulaire — compatible **local** (PySpark standalone) et **Databricks**.
+# MAGIC Configuration pilotée par `config/config.yaml` (section `silver`).
+# MAGIC
+# MAGIC Étapes :
+# MAGIC 1. Config + détection environnement
+# MAGIC 2. Session Spark
+# MAGIC 3. Chargement Bronze (Unity Catalog ou fichiers locaux)
+# MAGIC 4. Analyse exploratoire
+# MAGIC 5. Nettoyage (dédup, nulls, types)
+# MAGIC 6. Standardisation colonnes
+# MAGIC 7. Enrichissement (géo, catégories, conformité)
+# MAGIC 8. Sélection finale
+# MAGIC 9. Écriture Silver (Unity Catalog + ADLS Gen2 partitionné)
+# MAGIC 10. Validation post-écriture
+# MAGIC
 
-# %% [markdown]
-# ## 0 — Imports
-
-# %%
 # COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 0 — Imports
+# MAGIC
+
+# COMMAND ----------
+
 import os
 import sys
 import yaml
@@ -30,10 +42,12 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, DoubleType
 
-# %% [markdown]
-# ## 1 — Configuration
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ## 1 — Configuration
+# MAGIC
+
 # COMMAND ----------
 
 
@@ -44,18 +58,22 @@ def load_config(config_path: str = None) -> dict:
     Compatible execution depuis notebooks/silver/ ou depuis la racine.
     """
     if config_path is None:
-        candidates = [
-            "config/config.yaml",
-            "../../config/config.yaml",
-        ]
-        for c in candidates:
-            if os.path.exists(c):
-                config_path = c
-                break
+        if "DATABRICKS_RUNTIME_VERSION" in os.environ:
+            base_dir = "/Workspace/Users/krhazlani.ext@simplonformations.co/brief-water-quality-pipeline"
+            config_path = os.path.join(base_dir, "config/config.yaml")
         else:
-            raise FileNotFoundError(
-                "config.yaml introuvable. Fournissez --config explicitement."
-            )
+            candidates = [
+                "config/config.yaml",
+                "../../config/config.yaml",
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    config_path = c
+                    break
+            else:
+                raise FileNotFoundError(
+                    "config.yaml introuvable. Fournissez --config explicitement."
+                )
     with open(config_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -81,8 +99,8 @@ def get_paths(cfg: dict) -> dict:
     return get_silver_cfg(cfg)["paths"][env_key]
 
 
-# %%
 # COMMAND ----------
+
 # Chargement global (visible par toutes les cellules du notebook)
 # Guard : ne s'execute pas lors d'un import (tests unitaires, etc.)
 _NOTEBOOK_RUN = __name__ == "__main__" or (
@@ -95,6 +113,11 @@ if _NOTEBOOK_RUN:
     CFG = load_config()
     SILVER_CFG = get_silver_cfg(CFG)
     PATHS = get_paths(CFG)
+    UC_CFG = CFG["unity_catalog"]
+    STORAGE = CFG["storage"]
+    SECRETS = STORAGE["secrets"]
+
+    IS_DATABRICKS = is_databricks(CFG)
 
     BRONZE_PATH = PATHS["bronze"]
     SILVER_PATH = PATHS["silver"]
@@ -105,24 +128,44 @@ if _NOTEBOOK_RUN:
     SOUS_CATS = SILVER_CFG["sous_categories"]
     OUTPUT_COLS = SILVER_CFG["output_columns"]
 
-    IS_DATABRICKS = is_databricks(CFG)
+    # ── Unity Catalog ──────────────────────────────────────────────────────
+    CATALOG = UC_CFG["catalog"]
+    BRONZE_UC_SCHEMA = UC_CFG["bronze"]["schema"]
+    SILVER_UC_SCHEMA = UC_CFG["silver"]["schema"]
+    SILVER_TABLE_FULL = f"{CATALOG}.{SILVER_UC_SCHEMA}.{OUTPUT_TABLE}"
+
+    # Tables geo Bronze UC
+    GEO_SCHEMA = UC_CFG["geo"]["schema"]
+    UC_REGIONS = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['regions']}"
+    UC_DEPARTEMENTS = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['departements']}"
+    UC_COMMUNES = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['communes']}"
+    UC_WATER_QUALITY = f"{CATALOG}.{BRONZE_UC_SCHEMA}.{
+        UC_CFG['bronze']['table']}"
+
+    # ── Storage ────────────────────────────────────────────────────────────
+    STORAGE_ACCOUNT = STORAGE["account_name"]
+    SECRETS_SCOPE = SECRETS["scope"]
+    SECRET_KEY_NAME = SECRETS["storage_account_key"]
 
     print(f"Environnement : {'Databricks' if IS_DATABRICKS else 'Local'}")
-    print(f"Bronze path   : {BRONZE_PATH}")
-    print(f"Silver path   : {SILVER_PATH}")
+    print(f"Bronze UC     : {UC_WATER_QUALITY}")
+    print(f"Silver UC     : {SILVER_TABLE_FULL}")
+    print(f"Silver ADLS   : {SILVER_PATH}/{OUTPUT_TABLE}")
 
-# %% [markdown]
-# ## 2 — Session Spark
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ## 2 — Session Spark
+# MAGIC
+
 # COMMAND ----------
 
 
 def get_spark(cfg: dict) -> SparkSession:
     """
     Retourne la SparkSession adaptée a l'environnement.
-    - Databricks : recupere la session existante (variable `spark` globale).
-    - Local      : cree une session avec Delta Lake configure via delta-spark.
+    - Databricks : recupere la session existante.
+    - Local      : cree une session avec Delta Lake via delta-spark.
     """
     spark_cfg = get_silver_cfg(cfg)["spark"]
 
@@ -144,48 +187,50 @@ def get_spark(cfg: dict) -> SparkSession:
     ).getOrCreate()
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    spark = get_spark(CFG)
-    spark.sparkContext.setLogLevel("ERROR")
-    print(
-        f"Spark {
-            spark.version} OK  |  app={
-            spark.conf.get('spark.app.name')}")
-
-# %% [markdown]
-# ## 3 — Chargement Bronze
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 3 — Chargement Bronze
+# MAGIC
 
-def load_bronze(spark: SparkSession, bronze_path: str) -> dict:
+# COMMAND ----------
+
+def load_bronze(spark: SparkSession, bronze_path: str, is_db: bool = False,
+                uc_tables: dict = None) -> dict:
     """
     Charge les 4 tables Delta Bronze.
+    - Databricks : lecture depuis Unity Catalog (spark.read.table)
+    - Local      : lecture depuis fichiers Delta (spark.read.format("delta").load)
     Retourne un dict {table_name: DataFrame}.
     """
-    tables = ["water_quality", "communes", "departements", "regions"]
-    loaded = {t: spark.read.format("delta").load(
-        f"{bronze_path}/{t}") for t in tables}
+    if is_db and uc_tables:
+        loaded = {
+            "water_quality": spark.read.table(uc_tables["water_quality"]),
+            "communes": spark.read.table(uc_tables["communes"]),
+            "departements": spark.read.table(uc_tables["departements"]),
+            "regions": spark.read.table(uc_tables["regions"]),
+        }
+    else:
+        tables = ["water_quality", "communes", "departements", "regions"]
+        loaded = {
+            t: spark.read.format("delta").load(f"{bronze_path}/{t}")
+            for t in tables
+        }
+
     for name, df in loaded.items():
         print(
             f"  {name:<15} : {df.count():>10,} lignes  | {len(df.columns)} colonnes")
+
     return loaded
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    bronze = load_bronze(spark, BRONZE_PATH)
-
-# %% [markdown]
-# ## 4 — Analyse exploratoire Bronze
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 4 — Analyse exploratoire Bronze
+# MAGIC
+
+# COMMAND ----------
 
 def explore_bronze(df_water: DataFrame) -> None:
     """Affiche les statistiques cles du DataFrame Bronze."""
@@ -219,25 +264,21 @@ def explore_bronze(df_water: DataFrame) -> None:
     df_water.select("reseaux").limit(2).show(truncate=False)
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    explore_bronze(bronze["water_quality"])
-
-# %% [markdown]
-# ## 5 — Nettoyage
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 5 — Nettoyage
+# MAGIC
+
+# COMMAND ----------
 
 def clean(df: DataFrame, dedup_keys: list) -> DataFrame:
     """
     - Deduplication sur cle metier (configurable via config.yaml > silver.dedup_keys)
-    - Filtres sur champs obligatoires (non-nullable selon doc SISE-Eaux)
-    - Correction des types (annee_partition, resultat_numerique, date_prelevement)
+    - Filtres sur champs obligatoires
+    - Correction des types
     - Derivation annee / mois
-    - Suppression colonnes techniques dlt (_dlt_load_id, _dlt_id)
+    - Suppression colonnes techniques dlt
     """
     total_before = df.count()
 
@@ -256,23 +297,19 @@ def clean(df: DataFrame, dedup_keys: list) -> DataFrame:
     )
 
     removed = total_before - df_out.count()
-    print(f"Avant  : {total_before:,}")
-    print(f"Apres  : {df_out.count():,}")
+    print(f"Avant      : {total_before:,}")
+    print(f"Apres      : {df_out.count():,}")
     print(f"Supprimees : {removed:,}  ({removed / total_before * 100:.2f}%)")
     return df_out
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    df_clean = clean(bronze["water_quality"], DEDUP_KEYS)
-
-# %% [markdown]
-# ## 6 — Standardisation des colonnes
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 6 — Standardisation des colonnes
+# MAGIC
+
+# COMMAND ----------
 
 def standardize(df: DataFrame) -> DataFrame:
     """
@@ -283,19 +320,15 @@ def standardize(df: DataFrame) -> DataFrame:
     """
     return (
         df
-        # Extraction JSON reseaux -> premier reseau
         .withColumn("_json", F.regexp_extract(F.col("reseaux"), r"\{.*?\}", 0))
         .withColumn("code_reseau", F.get_json_object(F.col("_json"), "$.code"))
         .withColumn("nom_reseau", F.get_json_object(F.col("_json"), "$.nom"))
         .drop("_json", "reseaux")
-        # Normalisation texte
         .withColumn("libelle_parametre", F.trim(F.col("libelle_parametre")))
         .withColumn("libelle_parametre_maj", F.upper(F.trim(F.col("libelle_parametre_maj"))))
         .withColumn("nom_commune", F.trim(F.col("nom_commune")))
-        # Padding codes INSEE
         .withColumn("code_commune", F.lpad(F.trim(F.col("code_commune")), 5, "0"))
         .withColumn("code_departement", F.lpad(F.trim(F.col("code_departement")), 2, "0"))
-        # Renommage conformite
         .withColumnRenamed("conclusion_conformite_prelevement", "conformite_globale")
         .withColumnRenamed("conformite_limites_bact_prelevement", "conformite_bact")
         .withColumnRenamed("conformite_limites_pc_prelevement", "conformite_pc")
@@ -304,22 +337,19 @@ def standardize(df: DataFrame) -> DataFrame:
     )
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    df_std = standardize(df_clean)
-    print("=== Schema post-standardisation ===")
-    df_std.printSchema()
-
-# %% [markdown]
-# ## 7 — Enrichissement
-
-# %% [markdown]
-# ### 7a — Jointure geographique (communes -> regions)
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 7 — Enrichissement
+# MAGIC
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 7a — Jointure geographique (communes -> regions)
+# MAGIC
+
+# COMMAND ----------
 
 def enrich_geo(df: DataFrame, df_communes: DataFrame,
                df_regions: DataFrame) -> DataFrame:
@@ -362,36 +392,27 @@ def enrich_geo(df: DataFrame, df_communes: DataFrame,
     return df_out
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    df_geo = enrich_geo(df_std, bronze["communes"], bronze["regions"])
-
-# %% [markdown]
-# ### 7b — Categories parametres (depuis config.yaml)
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### 7b — Categories parametres (depuis config.yaml)
+# MAGIC
 
-def enrich_categories(
-        df: DataFrame,
-        categories: dict,
-        sous_categories: dict) -> DataFrame:
+# COMMAND ----------
+
+def enrich_categories(df: DataFrame, categories: dict,
+                      sous_categories: dict) -> DataFrame:
     """
     Ajoute deux colonnes derivees, entierement pilotees par config.yaml :
-    - categorie_parametre      : depuis code_type_parametre (B/P/R -> libelle)
-    - sous_categorie_parametre : depuis regex sur libelle_parametre (lowercase)
+    - categorie_parametre      : depuis code_type_parametre
+    - sous_categorie_parametre : depuis regex sur libelle_parametre
     """
-    # Categorie principale
     cat_expr = F.lit("Autre")
     for code, label in categories.items():
         cat_expr = F.when(
             F.col("code_type_parametre") == code,
             label).otherwise(cat_expr)
 
-    # Sous-categorie (on itere en ordre inverse pour que le premier match
-    # gagne)
     sub_expr = F.lit("Autre")
     for label, pattern in reversed(list(sous_categories.items())):
         sub_expr = (
@@ -406,68 +427,54 @@ def enrich_categories(
     )
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    df_cat = enrich_categories(df_geo, CATEGORIES, SOUS_CATS)
-    print("=== Distribution categories parametres ===")
-    df_cat.groupBy("categorie_parametre", "sous_categorie_parametre") \
-          .count().orderBy("categorie_parametre", F.col("count").desc()) \
-          .show(30, truncate=False)
-
-# %% [markdown]
-# ### 7c — Conformite standardisee
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### 7c — Conformite standardisee
+# MAGIC
+
+# COMMAND ----------
 
 def enrich_conformite(df: DataFrame) -> DataFrame:
     """
-    Normalise le champ texte libre `conformite_globale` (SISE-Eaux) en :
-    - conformite_standard : 'conforme' | 'non_conforme' | 'conforme_avec_remarque' | 'inconnu'
+    Normalise conformite_globale en :
+    - conformite_standard : conforme | non_conforme | conforme_avec_remarque | inconnu
     - est_conforme        : boolean (True / False / null)
     """
     return (
-        df
-        .withColumn(
+        df .withColumn(
             "conformite_standard",
-            F.when(F.lower(F.col("conformite_globale")).rlike(r"non.conforme"),
-                   "non_conforme")
-            .when(F.lower(F.col("conformite_globale")).contains("remarque"),
-                  "conforme_avec_remarque")
-            .when(F.lower(F.col("conformite_globale")).contains("conforme"),
-                  "conforme")
-            .otherwise("inconnu")
-        )
-        .withColumn(
+            F.when(
+                F.lower(
+                    F.col("conformite_globale")).rlike(r"non.conforme"),
+                "non_conforme") .when(
+                F.lower(
+                    F.col("conformite_globale")).contains("remarque"),
+                "conforme_avec_remarque") .when(
+                F.lower(
+                    F.col("conformite_globale")).contains("conforme"),
+                "conforme") .otherwise("inconnu")) .withColumn(
             "est_conforme",
-            F.when(F.col("conformite_standard") == "conforme", True)
-             .when(F.col("conformite_standard") == "non_conforme", False)
-             .otherwise(F.lit(None).cast("boolean"))
-        )
-    )
+            F.when(
+                F.col("conformite_standard") == "conforme",
+                True) .when(
+                F.col("conformite_standard") == "non_conforme",
+                False) .otherwise(
+                F.lit(None).cast("boolean"))))
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    df_enrich = enrich_conformite(df_cat)
-    print("=== Repartition conformite ===")
-    df_enrich.groupBy("conformite_standard", "est_conforme") \
-             .count().orderBy("count", ascending=False).show()
-
-# %% [markdown]
-# ## 8 — Selection finale des colonnes
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 8 — Selection finale des colonnes
+# MAGIC
+
+# COMMAND ----------
 
 def select_output_columns(df: DataFrame, output_columns: list) -> DataFrame:
     """
     Garde uniquement les colonnes definies dans config.yaml > silver.output_columns.
-    Les colonnes absentes sont ignorees silencieusement (robustesse).
+    Les colonnes absentes sont ignorees silencieusement.
     """
     existing = set(df.columns)
     final = list(dict.fromkeys(c for c in output_columns if c in existing))
@@ -478,18 +485,13 @@ def select_output_columns(df: DataFrame, output_columns: list) -> DataFrame:
     return df.select(*final)
 
 
-# %%
-# COMMAND ----------
-if _NOTEBOOK_RUN:
-    df_silver = select_output_columns(df_enrich, OUTPUT_COLS)
-    df_silver.printSchema()
-
-# %% [markdown]
-# ## 9 — Ecriture Silver (Delta Lake)
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 9 — Ecriture Silver (Unity Catalog + ADLS Gen2)
+# MAGIC
+
+# COMMAND ----------
 
 def write_silver(
     df: DataFrame,
@@ -497,49 +499,91 @@ def write_silver(
     output_table: str,
     partition_by: list,
     is_databricks_env: bool = False,
+    silver_table_full: str = None,
+    storage_account: str = None,
+    secrets_scope: str = None,
+    secret_key_name: str = None,
 ) -> str:
     """
     Ecrit le DataFrame Silver en Delta Lake partitionne.
+
     - Local      : chemin systeme de fichiers local
-    - Databricks : chemin DBFS (dbfs:/mnt/...) ou Unity Catalog
-    Retourne le chemin de sortie pour la validation.
+    - Databricks : double écriture
+        1. Unity Catalog (saveAsTable — table managée)
+        2. ADLS Gen2 (abfss:// partitionné par annee x département)
+
+    Retourne le chemin ADLS pour la validation.
     """
-    out_path = f"{silver_path}/{output_table}"
+    adls_path = f"{silver_path}/{output_table}"
 
     if not is_databricks_env:
+        # ── Local ─────────────────────────────────────────────────────────
         os.makedirs(silver_path, exist_ok=True)
+        (
+            df.write
+              .format("delta")
+              .mode("overwrite")
+              .option("overwriteSchema", "true")
+              .partitionBy(*partition_by)
+              .save(adls_path)
+        )
+        print(f"Silver ecrit (local) : {adls_path}")
 
-    (
-        df.write
-          .format("delta")
-          .mode("overwrite")
-          .option("overwriteSchema", "true")
-          .partitionBy(*partition_by)
-          .save(out_path)
-    )
+    else:
+        # ── 1. Unity Catalog — table managée ──────────────────────────────
+        (
+            df.write
+              .format("delta")
+              .mode("overwrite")
+              .option("overwriteSchema", "true")
+              .partitionBy(*partition_by)
+              .saveAsTable(silver_table_full)
+        )
+        print(f"Silver UC ecrit : {silver_table_full}")
 
-    print(f"Silver ecrit : {out_path}")
-    print(f"Partitions   : {partition_by}")
-    return out_path
+        # ── 2. ADLS Gen2 — partitionné ────────────────────────────────────
+        storage_key = dbutils.secrets.get(  # noqa: F821
+            scope=secrets_scope, key=secret_key_name)
+        (
+            df.write
+              .format("delta")
+              .mode("overwrite")
+              .option("overwriteSchema", "true")
+              .option(
+                  f"fs.azure.account.key.{storage_account}.dfs.core.windows.net",
+                  storage_key
+              )
+            .partitionBy(*partition_by)
+            .save(adls_path)
+        )
+        print(f"Silver ADLS ecrit : {adls_path}")
+
+    print(f"Partitions : {partition_by}")
+    return adls_path
 
 
-# %%
 # COMMAND ----------
-if _NOTEBOOK_RUN:
-    silver_out_path = write_silver(
-        df_silver, SILVER_PATH, OUTPUT_TABLE, PARTITION_BY, IS_DATABRICKS
-    )
 
-# %% [markdown]
-# ## 10 — Validation post-ecriture
+# MAGIC %md
+# MAGIC ## 10 — Validation post-ecriture
+# MAGIC
 
-# %%
 # COMMAND ----------
 
-
-def validate_silver(spark: SparkSession, silver_out_path: str) -> None:
-    """Relit la table Silver et affiche les metriques cles."""
-    df = spark.read.format("delta").load(silver_out_path)
+def validate_silver(spark: SparkSession, silver_out_path: str,
+                    is_databricks_env: bool = False,
+                    silver_table_full: str = None) -> None:
+    """
+    Relit la table Silver et affiche les metriques cles.
+    - Databricks : lecture depuis Unity Catalog
+    - Local      : lecture depuis fichiers Delta
+    """
+    if is_databricks_env and silver_table_full:
+        df = spark.read.table(silver_table_full)
+        print(f"Source : Unity Catalog ({silver_table_full})")
+    else:
+        df = spark.read.format("delta").load(silver_out_path)
+        print(f"Source : fichiers Delta ({silver_out_path})")
 
     total = df.count()
     print(f"Total lignes Silver : {total:,}")
@@ -571,53 +615,39 @@ def validate_silver(spark: SparkSession, silver_out_path: str) -> None:
     df.show(2, truncate=False, vertical=True)
 
 
-# %%
 # COMMAND ----------
-if _NOTEBOOK_RUN:
-    validate_silver(spark, silver_out_path)
 
-# %% [markdown]
-# ## 11 — Arret Spark (local uniquement)
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## `__main__` — Execution en script standalone
+# MAGIC
+# MAGIC **Usage :**
+# MAGIC ```bash
+# MAGIC python notebooks/silver/silver_transform.py
+# MAGIC python notebooks/silver/silver_transform.py --config /chemin/vers/config.yaml
+# MAGIC ```
+# MAGIC
 
-# %%
 # COMMAND ----------
-if _NOTEBOOK_RUN and not IS_DATABRICKS:
-    spark.stop()
-    print("Spark arrete")
 
-# %% [markdown]
-# ---
-# ## `__main__` — Execution en script standalone
-#
-# **Usage :**
-# ```bash
-# # Depuis la racine du projet
-# python notebooks/silver/silver_transform.py
-#
-# # Avec chemin de config personnalise
-# python notebooks/silver/silver_transform.py --config /chemin/vers/config.yaml
-# ```
-
-# %%
-# COMMAND ----------
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Silver Transform — Water Quality Pipeline"
-    )
+        description="Silver Transform — Water Quality Pipeline")
     parser.add_argument(
         "--config",
         default=None,
-        help="Chemin vers config.yaml (detection automatique si omis)",
-    )
+        help="Chemin vers config.yaml (detection automatique si omis)")
     args, _ = parser.parse_known_args()
 
-    # ── 1. Config
     cfg = load_config(args.config)
     silver_cfg = get_silver_cfg(cfg)
     paths = get_paths(cfg)
     is_db = is_databricks(cfg)
+    uc_cfg = cfg["unity_catalog"]
+    storage = cfg["storage"]
+    secrets = storage["secrets"]
 
     b_path = paths["bronze"]
     s_path = paths["silver"]
@@ -628,26 +658,53 @@ if __name__ == "__main__":
     sous_cats = silver_cfg["sous_categories"]
     out_cols = silver_cfg["output_columns"]
 
+    catalog = uc_cfg["catalog"]
+    silver_table_full = f"{catalog}.{uc_cfg['silver']['schema']}.{table}"
+    storage_account = storage["account_name"]
+    secrets_scope = secrets["scope"]
+    secret_key_name = secrets["storage_account_key"]
+
+    uc_tables = {
+        "water_quality": f"{catalog}.{
+            uc_cfg['bronze']['schema']}.{
+            uc_cfg['bronze']['table']}",
+        "communes": f"{catalog}.{
+            uc_cfg['geo']['schema']}.{
+            uc_cfg['geo']['communes']}",
+        "departements": f"{catalog}.{
+            uc_cfg['geo']['schema']}.{
+            uc_cfg['geo']['departements']}",
+        "regions": f"{catalog}.{
+            uc_cfg['geo']['schema']}.{
+            uc_cfg['geo']['regions']}",
+    } if is_db else None
+
     print(f"[main] Environnement : {'Databricks' if is_db else 'Local'}")
     print(f"[main] Bronze -> {b_path}")
     print(f"[main] Silver -> {s_path}")
 
-    # ── 2. Spark
     session = get_spark(cfg)
-    session.sparkContext.setLogLevel("ERROR")
 
-    # ── 3. Pipeline
-    bz = load_bronze(session, b_path)
+    bz = load_bronze(session, b_path, is_db, uc_tables)
     _clean = clean(bz["water_quality"], dedup_keys)
     _std = standardize(_clean)
     _geo = enrich_geo(_std, bz["communes"], bz["regions"])
     _cat = enrich_categories(_geo, categories, sous_cats)
     _conf = enrich_conformite(_cat)
     _final = select_output_columns(_conf, out_cols)
-    out_path = write_silver(_final, s_path, table, partition_by, is_db)
-    validate_silver(session, out_path)
 
-    # ── 4. Nettoyage
+    out_path = write_silver(
+        _final, s_path, table, partition_by, is_db,
+        silver_table_full=silver_table_full if is_db else None,
+        storage_account=storage_account if is_db else None,
+        secrets_scope=secrets_scope if is_db else None,
+        secret_key_name=secret_key_name if is_db else None,
+    )
+
+    validate_silver(session, out_path, is_db,
+                    silver_table_full if is_db else None)
+
     if not is_db:
         session.stop()
+
     print("[main] Pipeline Silver termine avec succes")
