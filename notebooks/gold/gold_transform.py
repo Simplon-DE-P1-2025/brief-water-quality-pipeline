@@ -1,21 +1,30 @@
 # Databricks notebook source
-# %% [markdown]
-# # Gold Layer — Water Quality Pipeline
-#
-# Script modulaire — compatible **local** (PySpark standalone) et **Databricks**.
-# Configuration pilotée par `config/config.yaml` (section `gold`).
-#
-# Tables produites :
-# 1. gold_conformite_dept      → taux conformité par département / année
-# 2. gold_parametres_risks     → top paramètres non conformes par département
-# 3. gold_commune_stats        → statistiques qualité par commune
-# 4. gold_evolution_mensuelle  → évolution mensuelle conformité
+# /// script
+# [tool.databricks.environment]
+# environment_version = "1"
+# dependencies = [
+#   "pyyaml",
+# ]
+# ///
+# MAGIC %md
+# MAGIC # Gold Layer — Water Quality Pipeline
+# MAGIC
+# MAGIC Script modulaire — compatible **local** (PySpark standalone) et **Databricks**.
+# MAGIC Configuration pilotée par `config/config.yaml` (section `gold`).
+# MAGIC
+# MAGIC Tables produites :
+# MAGIC 1. gold_conformite_dept      → taux conformité par département / année
+# MAGIC 2. gold_parametres_risks     → top paramètres non conformes par département
+# MAGIC 3. gold_commune_stats        → statistiques qualité par commune
+# MAGIC 4. gold_evolution_mensuelle  → évolution mensuelle conformité
 
-# %% [markdown]
-# ## 0 — Imports
-
-# %%
 # COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 0 — Imports
+
+# COMMAND ----------
+
 import os
 import yaml
 
@@ -23,22 +32,27 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-# %% [markdown]
-# ## 1 — Configuration
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ## 1 — Configuration
+
 # COMMAND ----------
 
 
 def load_config(config_path: str = None) -> dict:
     if config_path is None:
-        candidates = ["config/config.yaml", "../../config/config.yaml"]
-        for c in candidates:
-            if os.path.exists(c):
-                config_path = c
-                break
+        if "DATABRICKS_RUNTIME_VERSION" in os.environ:
+            base_dir = "/Workspace/Users/krhazlani.ext@simplonformations.co/brief-water-quality-pipeline"
+            config_path = os.path.join(base_dir, "config/config.yaml")
         else:
-            raise FileNotFoundError("config.yaml introuvable.")
+            candidates = ["config/config.yaml", "../../config/config.yaml"]
+            for c in candidates:
+                if os.path.exists(c):
+                    config_path = c
+                    break
+            else:
+                raise FileNotFoundError("config.yaml introuvable.")
     with open(config_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -57,10 +71,11 @@ def get_paths(cfg: dict) -> dict:
     env_key = "databricks" if is_databricks(cfg) else "local"
     return get_gold_cfg(cfg)["paths"][env_key]
 
-# %% [markdown]
-# ## 2 — Session Spark
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ## 2 — Session Spark
+
 # COMMAND ----------
 
 
@@ -84,39 +99,50 @@ def get_spark(cfg: dict) -> SparkSession:
                 str(spark_cfg["shuffle_partitions"]))
     ).getOrCreate()
 
-# %% [markdown]
-# ## 3 — Chargement Silver
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ## 3 — Chargement Silver
+
 # COMMAND ----------
 
 
-def load_silver(spark: SparkSession, silver_path: str) -> DataFrame:
-    path = f"{silver_path}/water_quality"
-    df = spark.read.format("delta").load(path)
-    print(
-        f"Silver chargé : {df.count():>10,} lignes  | {len(df.columns)} colonnes")
+def load_silver(
+        spark: SparkSession,
+        silver_path: str,
+        is_db: bool = False,
+        silver_table_full: str = None) -> DataFrame:
+    """
+    Charge la table Silver.
+    - Databricks : lecture depuis Unity Catalog
+    - Local      : lecture depuis fichiers Delta
+    """
+    if is_db and silver_table_full:
+        df = spark.read.table(silver_table_full)
+        print(f"Silver chargé (UC) : {silver_table_full}")
+    else:
+        path = f"{silver_path}/water_quality"
+        df = spark.read.format("delta").load(path)
+        print(f"Silver chargé (local) : {path}")
+
+    print(f"  {df.count():>10,} lignes  | {len(df.columns)} colonnes")
     return df
 
-# %% [markdown]
-# ## 4 — Tables Gold
+# COMMAND ----------
 
-# %% [markdown]
-# ### 4a — gold_conformite_dept
+# MAGIC %md
+# MAGIC ## 4 — Tables Gold
 
-# %%
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 4a — gold_conformite_dept
+
 # COMMAND ----------
 
 
 def build_conformite_dept(df: DataFrame) -> DataFrame:
-    """
-    Taux de conformité agrégé par département et année.
-
-    Colonnes :
-        annee, code_departement, nom_departement, nom_region,
-        nb_analyses, nb_conformes, nb_non_conformes, nb_inconnus,
-        taux_conformite_pct, taux_non_conformite_pct
-    """
+    """Taux de conformité agrégé par département et année."""
     return (
         df .groupBy(
             "annee",
@@ -152,24 +178,20 @@ def build_conformite_dept(df: DataFrame) -> DataFrame:
             "annee",
             "code_departement"))
 
-# %% [markdown]
-# ### 4b — gold_parametres_risks
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ### 4b — gold_parametres_risks
+
 # COMMAND ----------
 
 
 def build_parametres_risks(df: DataFrame, top_n: int = 10) -> DataFrame:
-    """
-    Top N paramètres non conformes par département et année.
-
-    Colonnes :
-        annee, code_departement, nom_departement,
-        code_parametre, libelle_parametre, categorie_parametre,
-        sous_categorie_parametre, nb_non_conformes, pct_non_conformes, rank
-    """
-    window = Window.partitionBy("annee", "code_departement") \
-                   .orderBy(F.col("nb_non_conformes").desc())
+    """Top N paramètres non conformes par département et année."""
+    window = (
+        Window.partitionBy("annee", "code_departement")
+              .orderBy(F.col("nb_non_conformes").desc())
+    )
 
     return (
         df .filter(
@@ -207,23 +229,16 @@ def build_parametres_risks(df: DataFrame, top_n: int = 10) -> DataFrame:
             "code_departement",
             "rank"))
 
-# %% [markdown]
-# ### 4c — gold_commune_stats
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ### 4c — gold_commune_stats
+
 # COMMAND ----------
 
 
 def build_commune_stats(df: DataFrame) -> DataFrame:
-    """
-    Statistiques qualité eau par commune et année.
-
-    Colonnes :
-        annee, code_commune, nom_commune, code_departement,
-        nom_departement, nom_region, latitude, longitude, population,
-        nb_analyses, nb_conformes, taux_conformite_pct,
-        nb_parametres_distincts, nb_non_conformes
-    """
+    """Statistiques qualité eau par commune et année."""
     return (
         df
         .groupBy(
@@ -244,22 +259,16 @@ def build_commune_stats(df: DataFrame) -> DataFrame:
         .orderBy("annee", "code_departement", "nom_commune")
     )
 
-# %% [markdown]
-# ### 4d — gold_evolution_mensuelle
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ### 4d — gold_evolution_mensuelle
+
 # COMMAND ----------
 
 
 def build_evolution_mensuelle(df: DataFrame) -> DataFrame:
-    """
-    Évolution mensuelle du taux de conformité par département.
-
-    Colonnes :
-        annee, mois, code_departement, nom_departement,
-        nb_analyses, nb_conformes, taux_conformite_pct,
-        delta_taux_pct  (variation vs mois précédent)
-    """
+    """Évolution mensuelle du taux de conformité par département."""
     window_lag = (
         Window.partitionBy("code_departement")
               .orderBy("annee", "mois")
@@ -296,10 +305,11 @@ def build_evolution_mensuelle(df: DataFrame) -> DataFrame:
             "mois",
             "code_departement"))
 
-# %% [markdown]
-# ## 5 — Écriture Gold
+# COMMAND ----------
 
-# %%
+# MAGIC %md
+# MAGIC ## 5 — Écriture Gold (Unity Catalog + ADLS Gen2)
+
 # COMMAND ----------
 
 
@@ -309,141 +319,106 @@ def write_gold(
     tables_cfg: dict,
     gold_path: str,
     is_databricks_env: bool = False,
-    catalog: str = "main",
-    database: str = "gold",
+    catalog: str = None,
+    schema: str = "gold",
+    storage_account: str = None,
+    secrets_scope: str = None,
+    secret_key_name: str = None,
 ) -> str:
     """
     Écrit une table Gold en Delta Lake.
-    - Local      : chemin fichier  → data/gold/<output_table>
-    - Databricks : Unity Catalog   → catalog.database.output_table
+    - Local      : chemin fichier Delta
+    - Databricks : double écriture
+        1. Unity Catalog (saveAsTable)
+        2. ADLS Gen2 (abfss:// partitionné)
     """
     table_cfg = tables_cfg[table_key]
     out_table = table_cfg["output_table"]
     partitions = table_cfg["partition_by"]
-    out_path = f"{gold_path}/{out_table}"
+    adls_path = f"{gold_path}/{out_table}"
 
     if not is_databricks_env:
         os.makedirs(gold_path, exist_ok=True)
+        (
+            df.write
+              .format("delta")
+              .mode("overwrite")
+              .option("overwriteSchema", "true")
+              .partitionBy(*partitions)
+              .save(adls_path)
+        )
+        print(f"Gold écrit (local) : {adls_path}")
 
-    writer = (
-        df.write
-          .format("delta")
-          .mode("overwrite")
-          .option("overwriteSchema", "true")
-          .partitionBy(*partitions)
-    )
-
-    if is_databricks_env:
-        full_table = f"{catalog}.{database}.{out_table}"
-        writer.saveAsTable(full_table)
-        print(f"Gold écrit (Databricks) : {full_table}")
     else:
-        writer.save(out_path)
-        print(f"Gold écrit (local)      : {out_path}")
+        # ── 1. Unity Catalog ──────────────────────────────────────────────
+        full_table = f"{catalog}.{schema}.{out_table}"
+        (
+            df.write
+              .format("delta")
+              .mode("overwrite")
+              .option("overwriteSchema", "true")
+              .partitionBy(*partitions)
+              .saveAsTable(full_table)
+        )
+        print(f"Gold UC écrit : {full_table}")
 
-    return out_path
+        # ── 2. ADLS Gen2 ──────────────────────────────────────────────────
+        storage_key = dbutils.secrets.get(  # noqa: F821
+            scope=secrets_scope, key=secret_key_name)
+        (
+            df.write
+              .format("delta")
+              .mode("overwrite")
+              .option("overwriteSchema", "true")
+              .option(
+                  f"fs.azure.account.key.{storage_account}.dfs.core.windows.net",
+                  storage_key
+              )
+            .partitionBy(*partitions)
+            .save(adls_path)
+        )
+        print(f"Gold ADLS écrit : {adls_path}")
 
-# %% [markdown]
-# ## 6 — Validation post-écriture
+    return adls_path
 
-# %%
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6 — Validation post-écriture
+
 # COMMAND ----------
 
 
-def validate_gold(spark: SparkSession, paths: dict) -> None:
+def validate_gold(spark: SparkSession, paths: dict,
+                  is_db: bool = False, catalog: str = None,
+                  schema: str = "gold") -> None:
     """Relit chaque table Gold et affiche les métriques clés."""
     print("\n" + "=" * 60)
     print("VALIDATION GOLD")
     print("=" * 60)
 
     for key, path in paths.items():
-        df = spark.read.format("delta").load(path)
-        print(f"\n── {key}")
-        print(f"   Lignes   : {df.count():,}")
-        print(f"   Colonnes : {len(df.columns)}")
-        df.show(5, truncate=False)
+        try:
+            if is_db and catalog:
+                table_name = path.split("/")[-1]
+                df = spark.read.table(f"{catalog}.{schema}.{table_name}")
+                print(f"\n── {key} (UC)")
+            else:
+                df = spark.read.format("delta").load(path)
+                print(f"\n── {key} (local)")
+            print(f"   Lignes   : {df.count():,}")
+            print(f"   Colonnes : {len(df.columns)}")
+            df.show(5, truncate=False)
+        except Exception as e:
+            print(f"   Erreur validation {key} : {e}")
 
-# %% [markdown]
-# ## 7 — Exécution notebook (Databricks uniquement)
-
-# %%
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 7 — Exécution
 
-_NOTEBOOK_RUN = (
-    "ipykernel" in __import__("sys").modules
-    or "DATABRICKS_RUNTIME_VERSION" in os.environ
-)
-
-if _NOTEBOOK_RUN:
-    CFG = load_config()
-    GOLD_CFG = get_gold_cfg(CFG)
-    PATHS = get_paths(CFG)
-
-    SILVER_PATH = PATHS["silver"]
-    GOLD_PATH = PATHS["gold"]
-    TABLES = GOLD_CFG["tables"]
-    IS_DATABRICKS = is_databricks(CFG)
-    DB_CATALOG = GOLD_CFG.get("databricks", {}).get("catalog", "main")
-    DB_DATABASE = GOLD_CFG.get("databricks", {}).get("database", "gold")
-
-    print(f"Environnement : {'Databricks' if IS_DATABRICKS else 'Local'}")
-    print(f"Silver path   : {SILVER_PATH}")
-    print(f"Gold path     : {GOLD_PATH}")
-
-    spark = get_spark(CFG)
-    spark.sparkContext.setLogLevel("ERROR")
-    print(
-        f"Spark {
-            spark.version} OK  |  app={
-            spark.conf.get('spark.app.name')}")
-
-    df_silver = load_silver(spark, SILVER_PATH)
-
-    df_conformite_dept = build_conformite_dept(df_silver)
-    print("=== gold_conformite_dept ===")
-    df_conformite_dept.show(truncate=False)
-
-    df_parametres_risks = build_parametres_risks(df_silver, top_n=10)
-    print("=== gold_parametres_risks ===")
-    df_parametres_risks.show(20, truncate=False)
-
-    df_commune_stats = build_commune_stats(df_silver)
-    print("=== gold_commune_stats ===")
-    df_commune_stats.show(10, truncate=False)
-
-    df_evolution_mensuelle = build_evolution_mensuelle(df_silver)
-    print("=== gold_evolution_mensuelle ===")
-    df_evolution_mensuelle.show(20, truncate=False)
-
-    paths_written = {}
-    for key, df_gold in [
-        ("conformite_dept", df_conformite_dept),
-        ("parametres_risks", df_parametres_risks),
-        ("commune_stats", df_commune_stats),
-        ("evolution_mensuelle", df_evolution_mensuelle),
-    ]:
-        paths_written[key] = write_gold(
-            df_gold,
-            key,
-            TABLES,
-            GOLD_PATH,
-            IS_DATABRICKS,
-            DB_CATALOG,
-            DB_DATABASE)
-
-    validate_gold(spark, paths_written)
-
-    if not IS_DATABRICKS:
-        spark.stop()
-        print("Spark arrêté")
-
-# %% [markdown]
-# ---
-# ## `__main__` — Exécution en script standalone
-
-# %%
 # COMMAND ----------
+
 
 if __name__ == "__main__":
     import argparse
@@ -453,30 +428,37 @@ if __name__ == "__main__":
     parser.add_argument("--config", default=None)
     args, _ = parser.parse_known_args()
 
-    # ── 1. Config
     cfg = load_config(args.config)
     gold_cfg = get_gold_cfg(cfg)
     paths = get_paths(cfg)
     is_db = is_databricks(cfg)
+    uc_cfg = cfg["unity_catalog"]
+    storage = cfg["storage"]
+    secrets = storage["secrets"]
 
     s_path = paths["silver"]
     g_path = paths["gold"]
     tables = gold_cfg["tables"]
-    catalog = gold_cfg.get("databricks", {}).get("catalog", "main")
-    database = gold_cfg.get("databricks", {}).get("database", "gold")
+    catalog = uc_cfg["catalog"]
+    gold_schema = gold_cfg.get("databricks", {}).get("schema", "gold")
+    silver_full = f"{catalog}.{
+        uc_cfg['silver']['schema']}.{
+        uc_cfg['silver']['table']}"
+    storage_account = storage["account_name"]
+    secrets_scope = secrets["scope"]
+    secret_key_name = secrets["storage_account_key"]
 
     print(f"[main] Environnement : {'Databricks' if is_db else 'Local'}")
     print(f"[main] Silver -> {s_path}")
     print(f"[main] Gold   -> {g_path}")
 
-    # ── 2. Spark
     session = get_spark(cfg)
-    session.sparkContext.setLogLevel("ERROR")
+    silver = load_silver(
+        session,
+        s_path,
+        is_db,
+        silver_full if is_db else None)
 
-    # ── 3. Chargement Silver
-    silver = load_silver(session, s_path)
-
-    # ── 4. Build tables Gold
     gold_tables = {
         "conformite_dept": build_conformite_dept(silver),
         "parametres_risks": build_parametres_risks(silver, top_n=10),
@@ -484,16 +466,20 @@ if __name__ == "__main__":
         "evolution_mensuelle": build_evolution_mensuelle(silver),
     }
 
-    # ── 5. Écriture
     written = {}
     for key, df in gold_tables.items():
         written[key] = write_gold(
-            df, key, tables, g_path, is_db, catalog, database)
+            df, key, tables, g_path, is_db,
+            catalog=catalog if is_db else None,
+            schema=gold_schema if is_db else "gold",
+            storage_account=storage_account if is_db else None,
+            secrets_scope=secrets_scope if is_db else None,
+            secret_key_name=secret_key_name if is_db else None,
+        )
 
-    # ── 6. Validation
-    validate_gold(session, written)
+    validate_gold(session, written, is_db,
+                  catalog if is_db else None, gold_schema)
 
-    # ── 7. Nettoyage
     if not is_db:
         session.stop()
 
