@@ -11,6 +11,7 @@
         { "type": "docs",     "release": false },
         { "type": "chore",    "release": false },
         { "type": "test",     "release": false },
+        { "type": "docs",     "release": false },
         { "breaking": true,   "release": "major" }
       ]
     }],
