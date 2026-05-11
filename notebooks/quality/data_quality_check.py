@@ -20,7 +20,7 @@
 # MAGIC Layers validated :
 # MAGIC - Silver  : water_quality
 # MAGIC - Gold    : conformite_dept, parametres_risks, commune_stats,
-# evolution_mensuelle
+# MAGIC # evolution_mensuelle
 
 # COMMAND ----------
 
@@ -81,9 +81,7 @@ GOLD_PATH_LOCAL = cfg["gold"]["paths"]["local"]["gold"]
 
 # ── Unity Catalog ──────────────────────────────────────────────────────────
 CATALOG = UC_CFG["catalog"]
-SILVER_FULL = f"{CATALOG}.{
-    UC_CFG['silver']['schema']}.{
-        UC_CFG['silver']['table']}"
+SILVER_FULL = f"{CATALOG}.{UC_CFG['silver']['schema']}.{UC_CFG['silver']['table']}"
 GOLD_SCHEMA = cfg["gold"].get("databricks", {}).get("schema", "gold")
 QUALITY_SCHEMA = UC_CFG["quality"]["schema"]
 QUALITY_TABLE = UC_CFG["quality"]["table"]

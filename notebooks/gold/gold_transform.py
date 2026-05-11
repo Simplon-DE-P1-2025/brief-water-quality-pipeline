@@ -442,9 +442,8 @@ if __name__ == "__main__":
     catalog = uc_cfg["catalog"]
     gold_schema = gold_cfg.get("databricks", {}).get("schema", "gold")
 
-    schema = uc_cfg["silver"]["schema"]
-    table = uc_cfg["silver"]["table"]
-    silver_full = f"{catalog}.{schema}.{table}"
+    silver_full = f"{catalog}.{uc_cfg['silver']['schema']}.{uc_cfg['silver']['table']}"
+
     storage_account = storage["account_name"]
     secrets_scope = secrets["scope"]
     secret_key_name = secrets["storage_account_key"]
