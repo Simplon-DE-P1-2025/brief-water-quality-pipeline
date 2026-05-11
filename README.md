@@ -1,6 +1,7 @@
 # Water Quality Pipeline
 
-Pipeline de données médaillon sur le contrôle sanitaire de l'eau potable française.
+
+Pipeline analytique complet sur la qualité de l'eau potable française, de l'ingestion brute à l'exposition API, orchestré sur Databricks et validé localement.
 
 **Réalisé par** : Kaouter Rhazlani  
 **Formation** : Simplon — P1 / Data Engineer  
@@ -13,23 +14,52 @@ Pipeline de données médaillon sur le contrôle sanitaire de l'eau potable fran
 
 ---
 
-## Architecture
+
+## Architecture détaillée
 
 ```
-data.gouv.fr (ZIP annuels) / API Hub'Eau
-      |
-      v
-  BRONZE          Données brutes                  partitionné par année
-      |
-      v
-  SILVER          Nettoyées + enrichies           partitionné par année x département
-      |
-      v
-   GOLD           4 tables analytiques            prêtes à consommer
-      |
-      v
-  QUALITY         Great Expectations              5 suites Silver + Gold
+API Hub'Eau                geo.api.gouv.fr
+   |                           |
+   v                           v
++------------------+    +------------------+
+|   BRONZE         |    |   BRONZE GEO     |
+|  water_quality   |    |  regions         |
+|  (brut, partitionné    |  departements   |
+|   par année)     |    |  communes        |
++--------+---------+    +--------+---------+
+     |                       |
+     +----------++-----------+
+          |
+          v
+     +------------------+
+     |      SILVER      |
+     |  water_quality   |
+     |  (nettoyé,       |
+     |   enrichi,       |
+     |   35 colonnes)   |
+     +--------+---------+
+          |
+          v
+     +------------------+
+     |       GOLD       |
+     |  4 tables        |
+     |  analytiques     |
+     +--------+---------+
+          |
+          v
+     +------------------+
+     |  GREAT EXPECT.   |
+     |  5 suites QA     |
+     +------------------+
+          |
+          v
+     +------------------+
+     |   FastAPI        |
+     |  Databricks Apps |
+     |  4 endpoints     |
+     +------------------+
 ```
+
 
 ## Source des données
 
@@ -40,6 +70,7 @@ Les données proviennent de la base nationale **SISE-Eaux** du Ministère des So
 
 Couverture : prélèvements validés depuis 2016 — mise à jour mensuelle.  
 Licence : Licence Ouverte / Open Licence 2.0.
+
 
 ## Setup
 
@@ -67,6 +98,7 @@ uv run python notebooks/quality/data_quality_check.py
 Tous les paramètres (chemins, déduplication, catégories, colonnes) sont dans [`config/config.yaml`](config/config.yaml).  
 Les chemins locaux et Databricks (`dbfs:/mnt/...`) sont séparés.
 
+
 ## Tables Gold
 
 | Table | Description |
@@ -75,6 +107,7 @@ Les chemins locaux et Databricks (`dbfs:/mnt/...`) sont séparés.
 | `gold_parametres_risks` | Top 10 paramètres non conformes par département |
 | `gold_commune_stats` | Stats qualité et géolocalisation par commune |
 | `gold_evolution_mensuelle` | Evolution mensuelle avec variation mois/mois |
+
 
 ## Qualité des données
 
@@ -88,7 +121,17 @@ Validation via **Great Expectations 1.x** — `notebooks/quality/data_quality_ch
 | `gold_commune_stats` | Gold commune_stats | Non-nullité, coordonnées GPS, codes INSEE |
 | `gold_evolution_mensuelle` | Gold evolution_mensuelle | Non-nullité, mois 1-12, taux 0-100 |
 
-## Tests
+
+## Tests et validation
+
+Le projet est fortement testé :
+
+- **Bronze** : tests unitaires sur la génération des départements, la configuration, la préparation des records (sans appel API réel).
+- **Silver** : 60 tests couvrant le nettoyage, la standardisation, l'enrichissement, la conformité, la jointure géographique.
+- **Gold** : 40 tests sur l'agrégation, le calcul des top paramètres, les stats par commune, l'évolution mensuelle.
+- **Qualité** : 5 suites Great Expectations sur Silver et Gold.
+
+Les tests Spark sont isolés et partagés pour accélérer l'exécution.
 
 ```
 tests/test_bronze.py      ingestion, schéma
@@ -98,7 +141,50 @@ tests/test_gold.py        build_*, write_gold, configuration
 
 ---
 
-## Points de blocage Azure
+
+## Orchestration & CI/CD
+
+Pipeline orchestré par un **Databricks Workflow** hebdomadaire (5 tâches séquentielles et parallèles). CI automatisée via GitHub Actions : lint (flake8), tests unitaires (pytest), badge de statut.
+
+---
+
+## API — Databricks Apps
+
+L'API FastAPI expose les tables analytiques Gold du pipeline, déployée sur Databricks Apps.
+
+### Endpoints principaux
+
+| Endpoint                        | Description                                      |
+|----------------------------------|--------------------------------------------------|
+| `GET /health`                    | Statut de l'API et configuration active           |
+| `GET /tables`                    | Tables Gold disponibles                          |
+| `GET /conformite/departements`   | Taux de conformité par département et année       |
+| `GET /conformite/communes`       | Stats qualité par commune avec coordonnées GPS    |
+| `GET /parametres/risques`        | Top 10 paramètres non conformes                   |
+| `GET /evolution/mensuelle`       | Évolution mensuelle avec delta mois/mois          |
+
+Chaque endpoint supporte `?format=json` (défaut) et `?format=csv` pour export.
+
+---
+
+## Limitations et axes d'amélioration
+
+- **Blocages Azure** : limitations d'accès sur la subscription de formation (RBAC, quotas, clusters) ont nécessité des contournements (écriture via clé, exécution locale, upload manuel).
+- **Déploiement continu** : le CD complet Databricks n'a pas pu être validé faute d'accès cloud complet.
+- **API** : endpoints limités à la lecture, pas d'authentification avancée ni de pagination côté API.
+- **Scalabilité** : pipeline validé sur 3 départements, extensible à la France entière dès que les accès cloud sont rétablis.
+
+---
+
+## Documentation
+
+La documentation technique détaillée est disponible dans [docs/rapport.md](docs/rapport.md).
+
+---
+
+## Synthèse
+
+Ce projet démontre la construction d'un pipeline analytique moderne sur la qualité de l'eau potable, de l'ingestion brute à l'exposition API, en passant par la validation qualité et l'orchestration cloud. Malgré les contraintes d'accès Azure, l'architecture, les tests et la documentation garantissent la robustesse et la reproductibilité du pipeline.
 
 L'intégration cloud complète a été confrontée à plusieurs niveaux de restrictions sur la subscription Azure de formation. Voici le détail des blocages rencontrés et les contournements mis en place.
 
