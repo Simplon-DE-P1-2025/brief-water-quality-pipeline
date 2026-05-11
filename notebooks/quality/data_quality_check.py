@@ -108,9 +108,7 @@ GOLD_TABLES_LOCAL = {
 }
 
 print(f"Environnement  : {'Databricks' if IS_DATABRICKS else 'Local'}")
-print(
-    f"Silver         : {
-        SILVER_FULL if IS_DATABRICKS else SILVER_PATH_LOCAL}")
+print(f"Silver         : {SILVER_FULL if IS_DATABRICKS else SILVER_PATH_LOCAL}")
 print(f"Quality UC     : {QUALITY_FULL}")
 print(f"Quality ADLS   : {QUALITY_ADLS}/reports/")
 
@@ -171,9 +169,8 @@ def run_validation(context, df: pd.DataFrame, suite_name: str) -> dict:
 
     print(f"\n[{status}] {suite_name}")
     print(
-        f"  Expectations : {total} total | {passed} passed | {
-            total -
-            passed} failed")
+        f"  Expectations : {total} total | {passed} passed | {total - passed} failed"
+    )
 
     if not result["success"]:
         for r in result["results"]:
