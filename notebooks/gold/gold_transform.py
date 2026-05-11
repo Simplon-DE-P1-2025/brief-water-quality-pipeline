@@ -26,7 +26,6 @@
 # COMMAND ----------
 
 import os
-import sys
 import yaml
 
 from pyspark.sql import SparkSession, DataFrame
@@ -39,6 +38,7 @@ from pyspark.sql.window import Window
 # MAGIC ## 1 — Configuration
 
 # COMMAND ----------
+
 
 def load_config(config_path: str = None) -> dict:
     if config_path is None:
@@ -78,6 +78,7 @@ def get_paths(cfg: dict) -> dict:
 
 # COMMAND ----------
 
+
 def get_spark(cfg: dict) -> SparkSession:
     spark_cfg = get_gold_cfg(cfg)["spark"]
 
@@ -105,8 +106,12 @@ def get_spark(cfg: dict) -> SparkSession:
 
 # COMMAND ----------
 
-def load_silver(spark: SparkSession, silver_path: str,
-                is_db: bool = False, silver_table_full: str = None) -> DataFrame:
+
+def load_silver(
+        spark: SparkSession,
+        silver_path: str,
+        is_db: bool = False,
+        silver_table_full: str = None) -> DataFrame:
     """
     Charge la table Silver.
     - Databricks : lecture depuis Unity Catalog
@@ -135,26 +140,43 @@ def load_silver(spark: SparkSession, silver_path: str,
 
 # COMMAND ----------
 
+
 def build_conformite_dept(df: DataFrame) -> DataFrame:
     """Taux de conformité agrégé par département et année."""
     return (
-        df
-        .groupBy("annee", "code_departement", "nom_departement", "nom_region")
-        .agg(
+        df .groupBy(
+            "annee",
+            "code_departement",
+            "nom_departement",
+            "nom_region") .agg(
             F.count("*").alias("nb_analyses"),
-            F.sum(F.when(F.col("conformite_standard") == "conforme", 1).otherwise(0))
-             .alias("nb_conformes"),
-            F.sum(F.when(F.col("conformite_standard") == "non_conforme", 1).otherwise(0))
-             .alias("nb_non_conformes"),
-            F.sum(F.when(F.col("conformite_standard") == "inconnu", 1).otherwise(0))
-             .alias("nb_inconnus"),
-        )
-        .withColumn("taux_conformite_pct",
-                    F.round(F.col("nb_conformes") / F.col("nb_analyses") * 100, 2))
-        .withColumn("taux_non_conformite_pct",
-                    F.round(F.col("nb_non_conformes") / F.col("nb_analyses") * 100, 2))
-        .orderBy("annee", "code_departement")
-    )
+            F.sum(
+                F.when(
+                    F.col("conformite_standard") == "conforme",
+                    1).otherwise(0)) .alias("nb_conformes"),
+            F.sum(
+                        F.when(
+                            F.col("conformite_standard") == "non_conforme",
+                            1).otherwise(0)) .alias("nb_non_conformes"),
+            F.sum(
+                                F.when(
+                                    F.col("conformite_standard") == "inconnu",
+                                    1).otherwise(0)) .alias("nb_inconnus"),
+        ) .withColumn(
+            "taux_conformite_pct",
+            F.round(
+                F.col("nb_conformes") /
+                F.col("nb_analyses") *
+                100,
+                2)) .withColumn(
+            "taux_non_conformite_pct",
+            F.round(
+                F.col("nb_non_conformes") /
+                F.col("nb_analyses") *
+                100,
+                2)) .orderBy(
+            "annee",
+            "code_departement"))
 
 # COMMAND ----------
 
@@ -162,6 +184,7 @@ def build_conformite_dept(df: DataFrame) -> DataFrame:
 # MAGIC ### 4b — gold_parametres_risks
 
 # COMMAND ----------
+
 
 def build_parametres_risks(df: DataFrame, top_n: int = 10) -> DataFrame:
     """Top N paramètres non conformes par département et année."""
@@ -171,27 +194,40 @@ def build_parametres_risks(df: DataFrame, top_n: int = 10) -> DataFrame:
     )
 
     return (
-        df
-        .filter(F.col("conformite_standard") == "non_conforme")
-        .groupBy(
-            "annee", "code_departement", "nom_departement",
-            "code_parametre", "libelle_parametre",
-            "categorie_parametre", "sous_categorie_parametre",
-        )
-        .agg(F.count("*").alias("nb_non_conformes"))
-        .withColumn("rank", F.rank().over(window))
-        .filter(F.col("rank") <= top_n)
-        .join(
-            df.groupBy("annee", "code_departement", "code_parametre")
-              .agg(F.count("*").alias("nb_total")),
-            on=["annee", "code_departement", "code_parametre"],
+        df .filter(
+            F.col("conformite_standard") == "non_conforme") .groupBy(
+            "annee",
+            "code_departement",
+            "nom_departement",
+            "code_parametre",
+            "libelle_parametre",
+            "categorie_parametre",
+            "sous_categorie_parametre",
+        ) .agg(
+            F.count("*").alias("nb_non_conformes")) .withColumn(
+            "rank",
+            F.rank().over(window)) .filter(
+            F.col("rank") <= top_n) .join(
+            df.groupBy(
+                "annee",
+                "code_departement",
+                "code_parametre") .agg(
+                F.count("*").alias("nb_total")),
+            on=[
+                "annee",
+                "code_departement",
+                "code_parametre"],
             how="left",
-        )
-        .withColumn("pct_non_conformes",
-                    F.round(F.col("nb_non_conformes") / F.col("nb_total") * 100, 2))
-        .drop("nb_total")
-        .orderBy("annee", "code_departement", "rank")
-    )
+        ) .withColumn(
+            "pct_non_conformes",
+            F.round(
+                F.col("nb_non_conformes") /
+                F.col("nb_total") *
+                100,
+                2)) .drop("nb_total") .orderBy(
+            "annee",
+            "code_departement",
+            "rank"))
 
 # COMMAND ----------
 
@@ -199,6 +235,7 @@ def build_parametres_risks(df: DataFrame, top_n: int = 10) -> DataFrame:
 # MAGIC ### 4c — gold_commune_stats
 
 # COMMAND ----------
+
 
 def build_commune_stats(df: DataFrame) -> DataFrame:
     """Statistiques qualité eau par commune et année."""
@@ -229,6 +266,7 @@ def build_commune_stats(df: DataFrame) -> DataFrame:
 
 # COMMAND ----------
 
+
 def build_evolution_mensuelle(df: DataFrame) -> DataFrame:
     """Évolution mensuelle du taux de conformité par département."""
     window_lag = (
@@ -237,21 +275,35 @@ def build_evolution_mensuelle(df: DataFrame) -> DataFrame:
     )
 
     return (
-        df
-        .groupBy("annee", "mois", "code_departement", "nom_departement")
-        .agg(
+        df .groupBy(
+            "annee",
+            "mois",
+            "code_departement",
+            "nom_departement") .agg(
             F.count("*").alias("nb_analyses"),
-            F.sum(F.when(F.col("conformite_standard") == "conforme", 1).otherwise(0))
-             .alias("nb_conformes"),
-        )
-        .withColumn("taux_conformite_pct",
-                    F.round(F.col("nb_conformes") / F.col("nb_analyses") * 100, 2))
-        .withColumn("taux_precedent", F.lag("taux_conformite_pct", 1).over(window_lag))
-        .withColumn("delta_taux_pct",
-                    F.round(F.col("taux_conformite_pct") - F.col("taux_precedent"), 2))
-        .drop("taux_precedent")
-        .orderBy("annee", "mois", "code_departement")
-    )
+            F.sum(
+                F.when(
+                    F.col("conformite_standard") == "conforme",
+                    1).otherwise(0)) .alias("nb_conformes"),
+        ) .withColumn(
+            "taux_conformite_pct",
+            F.round(
+                F.col("nb_conformes") /
+                F.col("nb_analyses") *
+                100,
+                2)) .withColumn(
+            "taux_precedent",
+            F.lag(
+                "taux_conformite_pct",
+                1).over(window_lag)) .withColumn(
+            "delta_taux_pct",
+            F.round(
+                F.col("taux_conformite_pct") -
+                F.col("taux_precedent"),
+                2)) .drop("taux_precedent") .orderBy(
+            "annee",
+            "mois",
+            "code_departement"))
 
 # COMMAND ----------
 
@@ -259,6 +311,7 @@ def build_evolution_mensuelle(df: DataFrame) -> DataFrame:
 # MAGIC ## 5 — Écriture Gold (Unity Catalog + ADLS Gen2)
 
 # COMMAND ----------
+
 
 def write_gold(
     df: DataFrame,
@@ -279,10 +332,10 @@ def write_gold(
         1. Unity Catalog (saveAsTable)
         2. ADLS Gen2 (abfss:// partitionné)
     """
-    table_cfg  = tables_cfg[table_key]
-    out_table  = table_cfg["output_table"]
+    table_cfg = tables_cfg[table_key]
+    out_table = table_cfg["output_table"]
     partitions = table_cfg["partition_by"]
-    adls_path  = f"{gold_path}/{out_table}"
+    adls_path = f"{gold_path}/{out_table}"
 
     if not is_databricks_env:
         os.makedirs(gold_path, exist_ok=True)
@@ -310,7 +363,8 @@ def write_gold(
         print(f"Gold UC écrit : {full_table}")
 
         # ── 2. ADLS Gen2 ──────────────────────────────────────────────────
-        storage_key = dbutils.secrets.get(scope=secrets_scope, key=secret_key_name)
+        storage_key = dbutils.secrets.get(  # noqa: F821
+            scope=secrets_scope, key=secret_key_name)
         (
             df.write
               .format("delta")
@@ -320,8 +374,8 @@ def write_gold(
                   f"fs.azure.account.key.{storage_account}.dfs.core.windows.net",
                   storage_key
               )
-              .partitionBy(*partitions)
-              .save(adls_path)
+            .partitionBy(*partitions)
+            .save(adls_path)
         )
         print(f"Gold ADLS écrit : {adls_path}")
 
@@ -333,6 +387,7 @@ def write_gold(
 # MAGIC ## 6 — Validation post-écriture
 
 # COMMAND ----------
+
 
 def validate_gold(spark: SparkSession, paths: dict,
                   is_db: bool = False, catalog: str = None,
@@ -364,42 +419,50 @@ def validate_gold(spark: SparkSession, paths: dict,
 
 # COMMAND ----------
 
+
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Gold Transform — Water Quality Pipeline")
+    parser = argparse.ArgumentParser(
+        description="Gold Transform — Water Quality Pipeline")
     parser.add_argument("--config", default=None)
     args, _ = parser.parse_known_args()
 
-    cfg      = load_config(args.config)
+    cfg = load_config(args.config)
     gold_cfg = get_gold_cfg(cfg)
-    paths    = get_paths(cfg)
-    is_db    = is_databricks(cfg)
-    uc_cfg   = cfg["unity_catalog"]
-    storage  = cfg["storage"]
-    secrets  = storage["secrets"]
+    paths = get_paths(cfg)
+    is_db = is_databricks(cfg)
+    uc_cfg = cfg["unity_catalog"]
+    storage = cfg["storage"]
+    secrets = storage["secrets"]
 
-    s_path          = paths["silver"]
-    g_path          = paths["gold"]
-    tables          = gold_cfg["tables"]
-    catalog         = uc_cfg["catalog"]
-    gold_schema     = gold_cfg.get("databricks", {}).get("schema", "gold")
-    silver_full     = f"{catalog}.{uc_cfg['silver']['schema']}.{uc_cfg['silver']['table']}"
+    s_path = paths["silver"]
+    g_path = paths["gold"]
+    tables = gold_cfg["tables"]
+    catalog = uc_cfg["catalog"]
+    gold_schema = gold_cfg.get("databricks", {}).get("schema", "gold")
+    silver_full = f"{catalog}.{
+        uc_cfg['silver']['schema']}.{
+        uc_cfg['silver']['table']}"
     storage_account = storage["account_name"]
-    secrets_scope   = secrets["scope"]
+    secrets_scope = secrets["scope"]
     secret_key_name = secrets["storage_account_key"]
 
     print(f"[main] Environnement : {'Databricks' if is_db else 'Local'}")
     print(f"[main] Silver -> {s_path}")
     print(f"[main] Gold   -> {g_path}")
 
-    session   = get_spark(cfg)
-    silver    = load_silver(session, s_path, is_db, silver_full if is_db else None)
+    session = get_spark(cfg)
+    silver = load_silver(
+        session,
+        s_path,
+        is_db,
+        silver_full if is_db else None)
 
     gold_tables = {
-        "conformite_dept":    build_conformite_dept(silver),
-        "parametres_risks":   build_parametres_risks(silver, top_n=10),
-        "commune_stats":      build_commune_stats(silver),
+        "conformite_dept": build_conformite_dept(silver),
+        "parametres_risks": build_parametres_risks(silver, top_n=10),
+        "commune_stats": build_commune_stats(silver),
         "evolution_mensuelle": build_evolution_mensuelle(silver),
     }
 
@@ -407,11 +470,11 @@ if __name__ == "__main__":
     for key, df in gold_tables.items():
         written[key] = write_gold(
             df, key, tables, g_path, is_db,
-            catalog         = catalog         if is_db else None,
-            schema          = gold_schema     if is_db else "gold",
-            storage_account = storage_account if is_db else None,
-            secrets_scope   = secrets_scope   if is_db else None,
-            secret_key_name = secret_key_name if is_db else None,
+            catalog=catalog if is_db else None,
+            schema=gold_schema if is_db else "gold",
+            storage_account=storage_account if is_db else None,
+            secrets_scope=secrets_scope if is_db else None,
+            secret_key_name=secret_key_name if is_db else None,
         )
 
     validate_gold(session, written, is_db,
