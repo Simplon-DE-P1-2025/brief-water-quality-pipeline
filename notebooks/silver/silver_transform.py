@@ -50,6 +50,7 @@ from pyspark.sql.types import IntegerType, DoubleType
 
 # COMMAND ----------
 
+
 def load_config(config_path: str = None) -> dict:
     """
     Charge config/config.yaml.
@@ -109,40 +110,41 @@ _NOTEBOOK_RUN = __name__ == "__main__" or (
 )
 
 if _NOTEBOOK_RUN:
-    CFG        = load_config()
+    CFG = load_config()
     SILVER_CFG = get_silver_cfg(CFG)
-    PATHS      = get_paths(CFG)
-    UC_CFG     = CFG["unity_catalog"]
-    STORAGE    = CFG["storage"]
-    SECRETS    = STORAGE["secrets"]
+    PATHS = get_paths(CFG)
+    UC_CFG = CFG["unity_catalog"]
+    STORAGE = CFG["storage"]
+    SECRETS = STORAGE["secrets"]
 
     IS_DATABRICKS = is_databricks(CFG)
 
-    BRONZE_PATH  = PATHS["bronze"]
-    SILVER_PATH  = PATHS["silver"]
+    BRONZE_PATH = PATHS["bronze"]
+    SILVER_PATH = PATHS["silver"]
     OUTPUT_TABLE = SILVER_CFG["output_table"]
-    DEDUP_KEYS   = SILVER_CFG["dedup_keys"]
+    DEDUP_KEYS = SILVER_CFG["dedup_keys"]
     PARTITION_BY = SILVER_CFG["partition_by"]
-    CATEGORIES   = SILVER_CFG["categories"]
-    SOUS_CATS    = SILVER_CFG["sous_categories"]
-    OUTPUT_COLS  = SILVER_CFG["output_columns"]
+    CATEGORIES = SILVER_CFG["categories"]
+    SOUS_CATS = SILVER_CFG["sous_categories"]
+    OUTPUT_COLS = SILVER_CFG["output_columns"]
 
     # ── Unity Catalog ──────────────────────────────────────────────────────
-    CATALOG           = UC_CFG["catalog"]
-    BRONZE_UC_SCHEMA  = UC_CFG["bronze"]["schema"]
-    SILVER_UC_SCHEMA  = UC_CFG["silver"]["schema"]
+    CATALOG = UC_CFG["catalog"]
+    BRONZE_UC_SCHEMA = UC_CFG["bronze"]["schema"]
+    SILVER_UC_SCHEMA = UC_CFG["silver"]["schema"]
     SILVER_TABLE_FULL = f"{CATALOG}.{SILVER_UC_SCHEMA}.{OUTPUT_TABLE}"
 
     # Tables geo Bronze UC
-    GEO_SCHEMA       = UC_CFG["geo"]["schema"]
-    UC_REGIONS       = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['regions']}"
-    UC_DEPARTEMENTS  = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['departements']}"
-    UC_COMMUNES      = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['communes']}"
-    UC_WATER_QUALITY = f"{CATALOG}.{BRONZE_UC_SCHEMA}.{UC_CFG['bronze']['table']}"
+    GEO_SCHEMA = UC_CFG["geo"]["schema"]
+    UC_REGIONS = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['regions']}"
+    UC_DEPARTEMENTS = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['departements']}"
+    UC_COMMUNES = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['communes']}"
+    UC_WATER_QUALITY = f"{CATALOG}.{BRONZE_UC_SCHEMA}.{
+        UC_CFG['bronze']['table']}"
 
     # ── Storage ────────────────────────────────────────────────────────────
     STORAGE_ACCOUNT = STORAGE["account_name"]
-    SECRETS_SCOPE   = SECRETS["scope"]
+    SECRETS_SCOPE = SECRETS["scope"]
     SECRET_KEY_NAME = SECRETS["storage_account_key"]
 
     print(f"Environnement : {'Databricks' if IS_DATABRICKS else 'Local'}")
@@ -157,6 +159,7 @@ if _NOTEBOOK_RUN:
 # MAGIC
 
 # COMMAND ----------
+
 
 def get_spark(cfg: dict) -> SparkSession:
     """
@@ -203,9 +206,9 @@ def load_bronze(spark: SparkSession, bronze_path: str, is_db: bool = False,
     if is_db and uc_tables:
         loaded = {
             "water_quality": spark.read.table(uc_tables["water_quality"]),
-            "communes":      spark.read.table(uc_tables["communes"]),
-            "departements":  spark.read.table(uc_tables["departements"]),
-            "regions":       spark.read.table(uc_tables["regions"]),
+            "communes": spark.read.table(uc_tables["communes"]),
+            "departements": spark.read.table(uc_tables["departements"]),
+            "regions": spark.read.table(uc_tables["regions"]),
         }
     else:
         tables = ["water_quality", "communes", "departements", "regions"]
@@ -215,7 +218,8 @@ def load_bronze(spark: SparkSession, bronze_path: str, is_db: bool = False,
         }
 
     for name, df in loaded.items():
-        print(f"  {name:<15} : {df.count():>10,} lignes  | {len(df.columns)} colonnes")
+        print(
+            f"  {name:<15} : {df.count():>10,} lignes  | {len(df.columns)} colonnes")
 
     return loaded
 
@@ -236,7 +240,8 @@ def explore_bronze(df_water: DataFrame) -> None:
     df_water.printSchema()
 
     print("\n=== Distribution annee_partition ===")
-    df_water.groupBy("annee_partition").count().orderBy("annee_partition").show()
+    df_water.groupBy("annee_partition").count().orderBy(
+        "annee_partition").show()
 
     null_exprs = [
         (F.count(F.when(F.col(c).isNull(), c)) / total * 100).alias(c)
@@ -370,17 +375,19 @@ def enrich_geo(df: DataFrame, df_communes: DataFrame,
     )
 
     df_out = (
-        df
-        .join(ref_communes, df["code_commune"] == ref_communes["_code_commune"], how="left")
-        .drop("_code_commune")
-        .join(ref_regions, F.col("code_region") == ref_regions["_code_region"], how="left")
-        .drop("_code_region")
-    )
+        df .join(
+            ref_communes,
+            df["code_commune"] == ref_communes["_code_commune"],
+            how="left") .drop("_code_commune") .join(
+            ref_regions,
+            F.col("code_region") == ref_regions["_code_region"],
+            how="left") .drop("_code_region"))
 
-    n       = df_out.count()
+    n = df_out.count()
     matched = df_out.filter(F.col("nom_region").isNotNull()).count()
-    no_geo  = df_out.filter(F.col("latitude").isNull()).count()
-    print(f"Taux jointure region  : {matched / n * 100:.1f}%  ({matched:,}/{n:,})")
+    no_geo = df_out.filter(F.col("latitude").isNull()).count()
+    print(
+        f"Taux jointure region  : {matched / n * 100:.1f}%  ({matched:,}/{n:,})")
     print(f"Communes sans geodata : {no_geo:,} / {n:,}")
     return df_out
 
@@ -402,7 +409,9 @@ def enrich_categories(df: DataFrame, categories: dict,
     """
     cat_expr = F.lit("Autre")
     for code, label in categories.items():
-        cat_expr = F.when(F.col("code_type_parametre") == code, label).otherwise(cat_expr)
+        cat_expr = F.when(
+            F.col("code_type_parametre") == code,
+            label).otherwise(cat_expr)
 
     sub_expr = F.lit("Autre")
     for label, pattern in reversed(list(sous_categories.items())):
@@ -435,12 +444,16 @@ def enrich_conformite(df: DataFrame) -> DataFrame:
     return (
         df .withColumn(
             "conformite_standard",
-            F.when(F.lower(F.col("conformite_globale")).rlike(r"non.conforme"), "non_conforme")
-            .when(F.lower(F.col("conformite_globale")).contains("remarque"), "conforme_avec_remarque")
-            .when(F.lower(F.col("conformite_globale")).contains("conforme"), "conforme")
-            .otherwise("inconnu")
-        )
-        .withColumn(
+            F.when(
+                F.lower(
+                    F.col("conformite_globale")).rlike(r"non.conforme"),
+                "non_conforme") .when(
+                F.lower(
+                    F.col("conformite_globale")).contains("remarque"),
+                "conforme_avec_remarque") .when(
+                F.lower(
+                    F.col("conformite_globale")).contains("conforme"),
+                "conforme") .otherwise("inconnu")) .withColumn(
             "est_conforme",
             F.when(
                 F.col("conformite_standard") == "conforme",
@@ -464,8 +477,8 @@ def select_output_columns(df: DataFrame, output_columns: list) -> DataFrame:
     Les colonnes absentes sont ignorees silencieusement.
     """
     existing = set(df.columns)
-    final    = list(dict.fromkeys(c for c in output_columns if c in existing))
-    missing  = [c for c in output_columns if c not in existing]
+    final = list(dict.fromkeys(c for c in output_columns if c in existing))
+    missing = [c for c in output_columns if c not in existing]
     if missing:
         print(f"Colonnes absentes ignorees : {missing}")
     print(f"Colonnes Silver selectionnees : {len(final)}")
@@ -529,7 +542,8 @@ def write_silver(
         print(f"Silver UC ecrit : {silver_table_full}")
 
         # ── 2. ADLS Gen2 — partitionné ────────────────────────────────────
-        storage_key = dbutils.secrets.get(scope=secrets_scope, key=secret_key_name)
+        storage_key = dbutils.secrets.get(  # noqa: F821
+            scope=secrets_scope, key=secret_key_name)
         (
             df.write
               .format("delta")
@@ -539,8 +553,8 @@ def write_silver(
                   f"fs.azure.account.key.{storage_account}.dfs.core.windows.net",
                   storage_key
               )
-              .partitionBy(*partition_by)
-              .save(adls_path)
+            .partitionBy(*partition_by)
+            .save(adls_path)
         )
         print(f"Silver ADLS ecrit : {adls_path}")
 
@@ -587,8 +601,13 @@ def validate_silver(spark: SparkSession, silver_out_path: str,
     df.groupBy("annee").agg(
         F.count("*").alias("nb_analyses"),
         F.round(
-            F.sum(F.when(F.col("conformite_standard") == "conforme", 1).otherwise(0))
-            / F.count("*") * 100, 2,
+            F.sum(
+                F.when(
+                    F.col("conformite_standard") == "conforme",
+                    1).otherwise(0)) /
+            F.count("*") *
+            100,
+            2,
         ).alias("taux_conformite_%"),
     ).orderBy("annee").show()
 
@@ -614,39 +633,50 @@ def validate_silver(spark: SparkSession, silver_out_path: str,
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Silver Transform — Water Quality Pipeline")
-    parser.add_argument("--config", default=None,
-                        help="Chemin vers config.yaml (detection automatique si omis)")
+    parser = argparse.ArgumentParser(
+        description="Silver Transform — Water Quality Pipeline")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Chemin vers config.yaml (detection automatique si omis)")
     args, _ = parser.parse_known_args()
 
-    cfg        = load_config(args.config)
+    cfg = load_config(args.config)
     silver_cfg = get_silver_cfg(cfg)
-    paths      = get_paths(cfg)
-    is_db      = is_databricks(cfg)
-    uc_cfg     = cfg["unity_catalog"]
-    storage    = cfg["storage"]
-    secrets    = storage["secrets"]
+    paths = get_paths(cfg)
+    is_db = is_databricks(cfg)
+    uc_cfg = cfg["unity_catalog"]
+    storage = cfg["storage"]
+    secrets = storage["secrets"]
 
-    b_path       = paths["bronze"]
-    s_path       = paths["silver"]
-    table        = silver_cfg["output_table"]
-    dedup_keys   = silver_cfg["dedup_keys"]
+    b_path = paths["bronze"]
+    s_path = paths["silver"]
+    table = silver_cfg["output_table"]
+    dedup_keys = silver_cfg["dedup_keys"]
     partition_by = silver_cfg["partition_by"]
-    categories   = silver_cfg["categories"]
-    sous_cats    = silver_cfg["sous_categories"]
-    out_cols     = silver_cfg["output_columns"]
+    categories = silver_cfg["categories"]
+    sous_cats = silver_cfg["sous_categories"]
+    out_cols = silver_cfg["output_columns"]
 
-    catalog           = uc_cfg["catalog"]
+    catalog = uc_cfg["catalog"]
     silver_table_full = f"{catalog}.{uc_cfg['silver']['schema']}.{table}"
-    storage_account   = storage["account_name"]
-    secrets_scope     = secrets["scope"]
-    secret_key_name   = secrets["storage_account_key"]
+    storage_account = storage["account_name"]
+    secrets_scope = secrets["scope"]
+    secret_key_name = secrets["storage_account_key"]
 
     uc_tables = {
-        "water_quality": f"{catalog}.{uc_cfg['bronze']['schema']}.{uc_cfg['bronze']['table']}",
-        "communes":      f"{catalog}.{uc_cfg['geo']['schema']}.{uc_cfg['geo']['communes']}",
-        "departements":  f"{catalog}.{uc_cfg['geo']['schema']}.{uc_cfg['geo']['departements']}",
-        "regions":       f"{catalog}.{uc_cfg['geo']['schema']}.{uc_cfg['geo']['regions']}",
+        "water_quality": f"{catalog}.{
+            uc_cfg['bronze']['schema']}.{
+            uc_cfg['bronze']['table']}",
+        "communes": f"{catalog}.{
+            uc_cfg['geo']['schema']}.{
+            uc_cfg['geo']['communes']}",
+        "departements": f"{catalog}.{
+            uc_cfg['geo']['schema']}.{
+            uc_cfg['geo']['departements']}",
+        "regions": f"{catalog}.{
+            uc_cfg['geo']['schema']}.{
+            uc_cfg['geo']['regions']}",
     } if is_db else None
 
     print(f"[main] Environnement : {'Databricks' if is_db else 'Local'}")
@@ -655,20 +685,20 @@ if __name__ == "__main__":
 
     session = get_spark(cfg)
 
-    bz      = load_bronze(session, b_path, is_db, uc_tables)
-    _clean  = clean(bz["water_quality"], dedup_keys)
-    _std    = standardize(_clean)
-    _geo    = enrich_geo(_std, bz["communes"], bz["regions"])
-    _cat    = enrich_categories(_geo, categories, sous_cats)
-    _conf   = enrich_conformite(_cat)
-    _final  = select_output_columns(_conf, out_cols)
+    bz = load_bronze(session, b_path, is_db, uc_tables)
+    _clean = clean(bz["water_quality"], dedup_keys)
+    _std = standardize(_clean)
+    _geo = enrich_geo(_std, bz["communes"], bz["regions"])
+    _cat = enrich_categories(_geo, categories, sous_cats)
+    _conf = enrich_conformite(_cat)
+    _final = select_output_columns(_conf, out_cols)
 
     out_path = write_silver(
         _final, s_path, table, partition_by, is_db,
-        silver_table_full = silver_table_full if is_db else None,
-        storage_account   = storage_account   if is_db else None,
-        secrets_scope     = secrets_scope     if is_db else None,
-        secret_key_name   = secret_key_name   if is_db else None,
+        silver_table_full=silver_table_full if is_db else None,
+        storage_account=storage_account if is_db else None,
+        secrets_scope=secrets_scope if is_db else None,
+        secret_key_name=secret_key_name if is_db else None,
     )
 
     validate_silver(session, out_path, is_db,
