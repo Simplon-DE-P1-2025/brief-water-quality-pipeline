@@ -83,7 +83,7 @@ IS_DATABRICKS = (
 
 # ── Paramètres Unity Catalog ───────────────────────────────────────────────
 CATALOG = uc_cfg["catalog"]
-SCHEMA = uc_cfg["schema"]
+SCHEMA = uc_cfg["bronze"]["schema"]
 
 # ── Paramètres storage ─────────────────────────────────────────────────────
 STORAGE_ACCOUNT = storage["account_name"]
