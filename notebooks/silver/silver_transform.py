@@ -616,24 +616,18 @@ if __name__ == "__main__":
     secrets_scope = secrets["scope"]
     secret_key_name = secrets["storage_account_key"]
 
-    uc_tables = (
-        {
-            "water_quality": f"{catalog}.{
-                uc_cfg['bronze']['schema']}.{
-                uc_cfg['bronze']['table']}",
-            "communes": f"{catalog}.{
-                uc_cfg['geo']['schema']}.{
-                uc_cfg['geo']['communes']}",
-            "departements": f"{catalog}.{
-                uc_cfg['geo']['schema']}.{
-                uc_cfg['geo']['departements']}",
-            "regions": f"{catalog}.{
-                uc_cfg['geo']['schema']}.{
-                uc_cfg['geo']['regions']}",
-        }
-        if is_db
-        else None
-    )
+    bronze_schema = uc_cfg['bronze']['schema']
+    geo_schema = uc_cfg['geo']['schema']
+
+    bronze_schema = uc_cfg["bronze"]["schema"]
+    geo_schema = uc_cfg["geo"]["schema"]
+
+    uc_tables = {
+        "water_quality": f"{catalog}.{bronze_schema}.{uc_cfg['bronze']['table']}",
+        "communes": f"{catalog}.{geo_schema}.{uc_cfg['geo']['communes']}",
+        "departements": f"{catalog}.{geo_schema}.{uc_cfg['geo']['departements']}",
+        "regions": f"{catalog}.{geo_schema}.{uc_cfg['geo']['regions']}",
+    } if is_db else None
 
     print(f"[main] Environnement : {'Databricks' if is_db else 'Local'}")
     print(f"[main] Bronze -> {b_path}")
