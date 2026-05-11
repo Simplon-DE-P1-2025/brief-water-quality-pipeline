@@ -98,9 +98,10 @@ def get_paths(cfg: dict) -> dict:
     return get_silver_cfg(cfg)["paths"][env_key]
 
 
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## 2 — Session Spark
-# MAGIC
 
 # COMMAND ----------
 
