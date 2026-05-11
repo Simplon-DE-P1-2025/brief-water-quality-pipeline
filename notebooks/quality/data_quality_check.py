@@ -368,7 +368,7 @@ def save_report_adls(rows: list, ts: str) -> None:
     from azure.storage.blob import BlobServiceClient
     import io
 
-    storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)  # noqa: F821  # noqa: F821
+    storage_key = dbutils.secrets.get(scope=SECRETS_SCOPE, key=SECRET_KEY_NAME)  # noqa: F821
     report = {"run_timestamp": ts, "results": rows}
     blob_name = f"reports/report_{ts.replace(':', '-')}.json"
     content = json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8")
