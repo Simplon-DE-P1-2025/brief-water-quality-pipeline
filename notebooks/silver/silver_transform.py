@@ -173,17 +173,17 @@ def get_spark(cfg: dict) -> SparkSession:
         return SparkSession.getActiveSession() or SparkSession.builder.getOrCreate()
 
     from delta import configure_spark_with_delta_pip
+
     return configure_spark_with_delta_pip(
-        SparkSession.builder
-        .appName(spark_cfg["app_name"])
+        SparkSession.builder.appName(spark_cfg["app_name"])
         .master("local[*]")
         .config("spark.driver.memory", spark_cfg["driver_memory"])
-        .config("spark.sql.extensions",
-                "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        .config("spark.sql.shuffle.partitions",
-                str(spark_cfg["shuffle_partitions"]))
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .config(
+            "spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog",
+        )
+        .config("spark.sql.shuffle.partitions", str(spark_cfg["shuffle_partitions"]))
     ).getOrCreate()
 
 
@@ -195,8 +195,12 @@ def get_spark(cfg: dict) -> SparkSession:
 
 # COMMAND ----------
 
-def load_bronze(spark: SparkSession, bronze_path: str, is_db: bool = False,
-                uc_tables: dict = None) -> dict:
+
+def load_bronze(
+        spark: SparkSession,
+        bronze_path: str,
+        is_db: bool = False,
+        uc_tables: dict = None) -> dict:
     """
     Charge les 4 tables Delta Bronze.
     - Databricks : lecture depuis Unity Catalog (spark.read.table)
@@ -212,10 +216,8 @@ def load_bronze(spark: SparkSession, bronze_path: str, is_db: bool = False,
         }
     else:
         tables = ["water_quality", "communes", "departements", "regions"]
-        loaded = {
-            t: spark.read.format("delta").load(f"{bronze_path}/{t}")
-            for t in tables
-        }
+        loaded = {t: spark.read.format("delta").load(
+            f"{bronze_path}/{t}") for t in tables}
 
     for name, df in loaded.items():
         print(
@@ -231,6 +233,7 @@ def load_bronze(spark: SparkSession, bronze_path: str, is_db: bool = False,
 # MAGIC
 
 # COMMAND ----------
+
 
 def explore_bronze(df_water: DataFrame) -> None:
     """Affiche les statistiques cles du DataFrame Bronze."""
@@ -248,8 +251,9 @@ def explore_bronze(df_water: DataFrame) -> None:
         for c in df_water.columns
     ]
     null_df = (
-        df_water.select(null_exprs).toPandas().T
-        .rename(columns={0: "null_%"})
+        df_water.select(null_exprs)
+        .toPandas()
+        .T.rename(columns={0: "null_%"})
         .sort_values("null_%", ascending=False)
     )
     non_zero = null_df[null_df["null_%"] > 0]
@@ -257,8 +261,9 @@ def explore_bronze(df_water: DataFrame) -> None:
     print(non_zero.to_string() if not non_zero.empty else "  Aucun null detecte")
 
     print("\n=== Valeurs conformite ===")
-    df_water.groupBy("conclusion_conformite_prelevement") \
-            .count().orderBy("count", ascending=False).show()
+    df_water.groupBy("conclusion_conformite_prelevement").count().orderBy(
+        "count", ascending=False
+    ).show()
 
     print("=== Echantillon colonne reseaux ===")
     df_water.select("reseaux").limit(2).show(truncate=False)
@@ -272,6 +277,7 @@ def explore_bronze(df_water: DataFrame) -> None:
 
 # COMMAND ----------
 
+
 def clean(df: DataFrame, dedup_keys: list) -> DataFrame:
     """
     - Deduplication sur cle metier (configurable via config.yaml > silver.dedup_keys)
@@ -283,13 +289,14 @@ def clean(df: DataFrame, dedup_keys: list) -> DataFrame:
     total_before = df.count()
 
     df_out = (
-        df
-        .dropDuplicates(dedup_keys)
+        df.dropDuplicates(dedup_keys)
         .filter(F.col("date_prelevement").isNotNull())
         .filter(F.col("code_commune").isNotNull())
         .filter(F.col("libelle_parametre").isNotNull())
         .withColumn("annee_partition", F.col("annee_partition").cast(IntegerType()))
-        .withColumn("resultat_numerique", F.col("resultat_numerique").cast(DoubleType()))
+        .withColumn(
+            "resultat_numerique", F.col("resultat_numerique").cast(DoubleType())
+        )
         .withColumn("date_prelevement", F.to_date(F.col("date_prelevement")))
         .withColumn("annee", F.year(F.col("date_prelevement")).cast(IntegerType()))
         .withColumn("mois", F.month(F.col("date_prelevement")).cast(IntegerType()))
@@ -311,6 +318,7 @@ def clean(df: DataFrame, dedup_keys: list) -> DataFrame:
 
 # COMMAND ----------
 
+
 def standardize(df: DataFrame) -> DataFrame:
     """
     - Extraction code_reseau / nom_reseau depuis le champ JSON `reseaux`
@@ -319,20 +327,25 @@ def standardize(df: DataFrame) -> DataFrame:
     - Renommage semantique des colonnes conformite
     """
     return (
-        df
-        .withColumn("_json", F.regexp_extract(F.col("reseaux"), r"\{.*?\}", 0))
+        df.withColumn("_json", F.regexp_extract(F.col("reseaux"), r"\{.*?\}", 0))
         .withColumn("code_reseau", F.get_json_object(F.col("_json"), "$.code"))
         .withColumn("nom_reseau", F.get_json_object(F.col("_json"), "$.nom"))
         .drop("_json", "reseaux")
         .withColumn("libelle_parametre", F.trim(F.col("libelle_parametre")))
-        .withColumn("libelle_parametre_maj", F.upper(F.trim(F.col("libelle_parametre_maj"))))
+        .withColumn(
+            "libelle_parametre_maj", F.upper(F.trim(F.col("libelle_parametre_maj")))
+        )
         .withColumn("nom_commune", F.trim(F.col("nom_commune")))
         .withColumn("code_commune", F.lpad(F.trim(F.col("code_commune")), 5, "0"))
-        .withColumn("code_departement", F.lpad(F.trim(F.col("code_departement")), 2, "0"))
+        .withColumn(
+            "code_departement", F.lpad(F.trim(F.col("code_departement")), 2, "0")
+        )
         .withColumnRenamed("conclusion_conformite_prelevement", "conformite_globale")
         .withColumnRenamed("conformite_limites_bact_prelevement", "conformite_bact")
         .withColumnRenamed("conformite_limites_pc_prelevement", "conformite_pc")
-        .withColumnRenamed("conformite_references_bact_prelevement", "conformite_ref_bact")
+        .withColumnRenamed(
+            "conformite_references_bact_prelevement", "conformite_ref_bact"
+        )
         .withColumnRenamed("conformite_references_pc_prelevement", "conformite_ref_pc")
     )
 
@@ -351,34 +364,29 @@ def standardize(df: DataFrame) -> DataFrame:
 
 # COMMAND ----------
 
-def enrich_geo(df: DataFrame, df_communes: DataFrame,
-               df_regions: DataFrame) -> DataFrame:
-    ref_communes = (
-        df_communes
-        .select(
-            F.lpad(F.col("code_commune"), 5, "0").alias("_code_commune"),
-            F.col("latitude"),
-            F.col("longitude"),
-            F.col("population"),
-            F.col("code_region"),
-        )
-        .dropDuplicates(["_code_commune"])
-    )
 
-    ref_regions = (
-        df_regions
-        .select(
-            F.col("code_region").alias("_code_region"),
-            F.col("nom_region"),
-        )
-        .dropDuplicates(["_code_region"])
-    )
+def enrich_geo(
+    df: DataFrame, df_communes: DataFrame, df_regions: DataFrame
+) -> DataFrame:
+    ref_communes = df_communes.select(
+        F.lpad(F.col("code_commune"), 5, "0").alias("_code_commune"),
+        F.col("latitude"),
+        F.col("longitude"),
+        F.col("population"),
+        F.col("code_region"),
+    ).dropDuplicates(["_code_commune"])
+
+    ref_regions = df_regions.select(
+        F.col("code_region").alias("_code_region"),
+        F.col("nom_region"),
+    ).dropDuplicates(["_code_region"])
 
     df_out = (
-        df .join(
+        df.join(
             ref_communes,
             df["code_commune"] == ref_communes["_code_commune"],
-            how="left") .drop("_code_commune") .join(
+            how="left",
+        ) .drop("_code_commune") .join(
             ref_regions,
             F.col("code_region") == ref_regions["_code_region"],
             how="left") .drop("_code_region"))
@@ -400,8 +408,10 @@ def enrich_geo(df: DataFrame, df_communes: DataFrame,
 
 # COMMAND ----------
 
-def enrich_categories(df: DataFrame, categories: dict,
-                      sous_categories: dict) -> DataFrame:
+
+def enrich_categories(
+    df: DataFrame, categories: dict, sous_categories: dict
+) -> DataFrame:
     """
     Ajoute deux colonnes derivees, entierement pilotees par config.yaml :
     - categorie_parametre      : depuis code_type_parametre
@@ -415,15 +425,12 @@ def enrich_categories(df: DataFrame, categories: dict,
 
     sub_expr = F.lit("Autre")
     for label, pattern in reversed(list(sous_categories.items())):
-        sub_expr = (
-            F.when(F.lower(F.col("libelle_parametre")).rlike(pattern), label)
-             .otherwise(sub_expr)
-        )
+        sub_expr = F.when(
+            F.lower(F.col("libelle_parametre")).rlike(pattern), label
+        ).otherwise(sub_expr)
 
-    return (
-        df
-        .withColumn("categorie_parametre", cat_expr)
-        .withColumn("sous_categorie_parametre", sub_expr)
+    return df.withColumn("categorie_parametre", cat_expr).withColumn(
+        "sous_categorie_parametre", sub_expr
     )
 
 
@@ -435,32 +442,35 @@ def enrich_categories(df: DataFrame, categories: dict,
 
 # COMMAND ----------
 
+
 def enrich_conformite(df: DataFrame) -> DataFrame:
     """
     Normalise conformite_globale en :
     - conformite_standard : conforme | non_conforme | conforme_avec_remarque | inconnu
     - est_conforme        : boolean (True / False / null)
     """
-    return (
-        df .withColumn(
-            "conformite_standard",
-            F.when(
-                F.lower(
-                    F.col("conformite_globale")).rlike(r"non.conforme"),
-                "non_conforme") .when(
-                F.lower(
-                    F.col("conformite_globale")).contains("remarque"),
-                "conforme_avec_remarque") .when(
-                F.lower(
-                    F.col("conformite_globale")).contains("conforme"),
-                "conforme") .otherwise("inconnu")) .withColumn(
-            "est_conforme",
-            F.when(
-                F.col("conformite_standard") == "conforme",
-                True) .when(
-                F.col("conformite_standard") == "non_conforme",
-                False) .otherwise(
-                F.lit(None).cast("boolean"))))
+    return df.withColumn(
+        "conformite_standard",
+        F.when(
+            F.lower(
+                F.col("conformite_globale")).rlike(r"non.conforme"),
+            "non_conforme") .when(
+            F.lower(
+                F.col("conformite_globale")).contains("remarque"),
+            "conforme_avec_remarque",
+        ) .when(
+            F.lower(
+                F.col("conformite_globale")).contains("conforme"),
+            "conforme") .otherwise("inconnu"),
+    ).withColumn(
+        "est_conforme",
+        F.when(
+            F.col("conformite_standard") == "conforme",
+            True) .when(
+            F.col("conformite_standard") == "non_conforme",
+            False) .otherwise(
+            F.lit(None).cast("boolean")),
+    )
 
 
 # COMMAND ----------
@@ -470,6 +480,7 @@ def enrich_conformite(df: DataFrame) -> DataFrame:
 # MAGIC
 
 # COMMAND ----------
+
 
 def select_output_columns(df: DataFrame, output_columns: list) -> DataFrame:
     """
@@ -492,6 +503,7 @@ def select_output_columns(df: DataFrame, output_columns: list) -> DataFrame:
 # MAGIC
 
 # COMMAND ----------
+
 
 def write_silver(
     df: DataFrame,
@@ -520,39 +532,37 @@ def write_silver(
         # ── Local ─────────────────────────────────────────────────────────
         os.makedirs(silver_path, exist_ok=True)
         (
-            df.write
-              .format("delta")
-              .mode("overwrite")
-              .option("overwriteSchema", "true")
-              .partitionBy(*partition_by)
-              .save(adls_path)
+            df.write.format("delta")
+            .mode("overwrite")
+            .option("overwriteSchema", "true")
+            .partitionBy(*partition_by)
+            .save(adls_path)
         )
         print(f"Silver ecrit (local) : {adls_path}")
 
     else:
         # ── 1. Unity Catalog — table managée ──────────────────────────────
         (
-            df.write
-              .format("delta")
-              .mode("overwrite")
-              .option("overwriteSchema", "true")
-              .partitionBy(*partition_by)
-              .saveAsTable(silver_table_full)
+            df.write.format("delta")
+            .mode("overwrite")
+            .option("overwriteSchema", "true")
+            .partitionBy(*partition_by)
+            .saveAsTable(silver_table_full)
         )
         print(f"Silver UC ecrit : {silver_table_full}")
 
         # ── 2. ADLS Gen2 — partitionné ────────────────────────────────────
         storage_key = dbutils.secrets.get(  # noqa: F821
-            scope=secrets_scope, key=secret_key_name)
+            scope=secrets_scope, key=secret_key_name
+        )
         (
-            df.write
-              .format("delta")
-              .mode("overwrite")
-              .option("overwriteSchema", "true")
-              .option(
-                  f"fs.azure.account.key.{storage_account}.dfs.core.windows.net",
-                  storage_key
-              )
+            df.write.format("delta")
+            .mode("overwrite")
+            .option("overwriteSchema", "true")
+            .option(
+                f"fs.azure.account.key.{storage_account}.dfs.core.windows.net",
+                storage_key,
+            )
             .partitionBy(*partition_by)
             .save(adls_path)
         )
@@ -570,9 +580,13 @@ def write_silver(
 
 # COMMAND ----------
 
-def validate_silver(spark: SparkSession, silver_out_path: str,
-                    is_databricks_env: bool = False,
-                    silver_table_full: str = None) -> None:
+
+def validate_silver(
+    spark: SparkSession,
+    silver_out_path: str,
+    is_databricks_env: bool = False,
+    silver_table_full: str = None,
+) -> None:
     """
     Relit la table Silver et affiche les metriques cles.
     - Databricks : lecture depuis Unity Catalog
@@ -593,9 +607,9 @@ def validate_silver(spark: SparkSession, silver_out_path: str,
     df.groupBy("annee").count().orderBy("annee").show()
 
     print("=== Top 10 departements ===")
-    df.groupBy("code_departement", "nom_departement") \
-      .count().orderBy(F.col("count").desc()).limit(10) \
-      .toPandas().pipe(lambda p: print(p.to_string(index=False)))
+    df.groupBy("code_departement", "nom_departement").count().orderBy(
+        F.col("count").desc()
+    ).limit(10).toPandas().pipe(lambda p: print(p.to_string(index=False)))
 
     print("\n=== Taux de conformite par annee ===")
     df.groupBy("annee").agg(
@@ -634,11 +648,13 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Silver Transform — Water Quality Pipeline")
+        description="Silver Transform — Water Quality Pipeline"
+    )
     parser.add_argument(
         "--config",
         default=None,
-        help="Chemin vers config.yaml (detection automatique si omis)")
+        help="Chemin vers config.yaml (detection automatique si omis)",
+    )
     args, _ = parser.parse_known_args()
 
     cfg = load_config(args.config)
@@ -664,20 +680,24 @@ if __name__ == "__main__":
     secrets_scope = secrets["scope"]
     secret_key_name = secrets["storage_account_key"]
 
-    uc_tables = {
-        "water_quality": f"{catalog}.{
-            uc_cfg['bronze']['schema']}.{
-            uc_cfg['bronze']['table']}",
-        "communes": f"{catalog}.{
-            uc_cfg['geo']['schema']}.{
-            uc_cfg['geo']['communes']}",
-        "departements": f"{catalog}.{
-            uc_cfg['geo']['schema']}.{
-            uc_cfg['geo']['departements']}",
-        "regions": f"{catalog}.{
-            uc_cfg['geo']['schema']}.{
-            uc_cfg['geo']['regions']}",
-    } if is_db else None
+    uc_tables = (
+        {
+            "water_quality": f"{catalog}.{
+                uc_cfg['bronze']['schema']}.{
+                uc_cfg['bronze']['table']}",
+            "communes": f"{catalog}.{
+                uc_cfg['geo']['schema']}.{
+                uc_cfg['geo']['communes']}",
+            "departements": f"{catalog}.{
+                uc_cfg['geo']['schema']}.{
+                uc_cfg['geo']['departements']}",
+            "regions": f"{catalog}.{
+                uc_cfg['geo']['schema']}.{
+                uc_cfg['geo']['regions']}",
+        }
+        if is_db
+        else None
+    )
 
     print(f"[main] Environnement : {'Databricks' if is_db else 'Local'}")
     print(f"[main] Bronze -> {b_path}")
@@ -694,15 +714,22 @@ if __name__ == "__main__":
     _final = select_output_columns(_conf, out_cols)
 
     out_path = write_silver(
-        _final, s_path, table, partition_by, is_db,
+        _final,
+        s_path,
+        table,
+        partition_by,
+        is_db,
         silver_table_full=silver_table_full if is_db else None,
         storage_account=storage_account if is_db else None,
         secrets_scope=secrets_scope if is_db else None,
         secret_key_name=secret_key_name if is_db else None,
     )
 
-    validate_silver(session, out_path, is_db,
-                    silver_table_full if is_db else None)
+    validate_silver(
+        session,
+        out_path,
+        is_db,
+        silver_table_full if is_db else None)
 
     if not is_db:
         session.stop()
