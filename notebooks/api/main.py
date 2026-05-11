@@ -15,7 +15,6 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
-
 def load_config(config_path: str = None) -> dict:
     if config_path is None:
         if "DATABRICKS_RUNTIME_VERSION" in os.environ:
@@ -39,31 +38,30 @@ def is_databricks(cfg: dict) -> bool:
     )
 
 
-cfg = load_config()
-UC_CFG = cfg["unity_catalog"]
+cfg           = load_config()
+UC_CFG        = cfg["unity_catalog"]
 IS_DATABRICKS = is_databricks(cfg)
-CATALOG = UC_CFG["catalog"]
-GOLD_SCHEMA = cfg["gold"].get("databricks", {}).get("schema", "gold")
-GOLD_LOCAL = cfg["gold"]["paths"]["local"]["gold"]
+CATALOG       = UC_CFG["catalog"]
+GOLD_SCHEMA   = cfg["gold"].get("databricks", {}).get("schema", "gold")
+GOLD_LOCAL    = cfg["gold"]["paths"]["local"]["gold"]
 
 TABLES = {
-    "conformite_dept": "gold_conformite_dept",
-    "parametres_risks": "gold_parametres_risks",
-    "commune_stats": "gold_commune_stats",
-    "evolution_mensuelle": "gold_evolution_mensuelle",
+    "conformite_dept":    "gold_conformite_dept",
+    "parametres_risks":   "gold_parametres_risks",
+    "commune_stats":      "gold_commune_stats",
+    "evolution_mensuelle":"gold_evolution_mensuelle",
 }
 
 # COMMAND ----------
 
 # ── Helpers lecture ────────────────────────────────────────────────────────
 
-
 def read_gold(table_name: str) -> list[dict]:
     """Lit une table Gold — UC en Databricks, Delta local sinon."""
     if IS_DATABRICKS:
         from pyspark.sql import SparkSession
         spark = SparkSession.builder.getOrCreate()
-        full = f"{CATALOG}.{GOLD_SCHEMA}.{table_name}"
+        full  = f"{CATALOG}.{GOLD_SCHEMA}.{table_name}"
         try:
             df = spark.read.table(full).toPandas()
         except Exception as e:
@@ -73,24 +71,21 @@ def read_gold(table_name: str) -> list[dict]:
         path = f"{GOLD_LOCAL}/{table_name}"
         if not os.path.exists(path):
             raise HTTPException(404, detail=f"Table introuvable : {path}")
-        df = ds.dataset(
-            path,
-            format="parquet",
-            partitioning="hive").to_table().to_pandas()
+        df = ds.dataset(path, format="parquet", partitioning="hive").to_table().to_pandas()
 
     return df.where(df.notna(), other=None).to_dict(orient="records")
 
 
 def export_json(data: list[dict], filename: str) -> StreamingResponse:
     """Retourne un fichier JSON en téléchargement."""
-    content = json.dumps({"exported_at": datetime.now(timezone.utc).isoformat(
-    ), "count": len(data), "data": data}, ensure_ascii=False, indent=2, default=str)
+    content = json.dumps(
+        {"exported_at": datetime.now(timezone.utc).isoformat(), "count": len(data), "data": data},
+        ensure_ascii=False, indent=2, default=str
+    )
     return StreamingResponse(
-        io.BytesIO(
-            content.encode("utf-8")),
+        io.BytesIO(content.encode("utf-8")),
         media_type="application/json",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}.json"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}.json"'},
     )
 
 
@@ -103,11 +98,9 @@ def export_csv(data: list[dict], filename: str) -> StreamingResponse:
     writer.writeheader()
     writer.writerows(data)
     return StreamingResponse(
-        io.BytesIO(
-            buf.getvalue().encode("utf-8")),
+        io.BytesIO(buf.getvalue().encode("utf-8")),
         media_type="text/csv",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}.csv"'},
     )
 
 
@@ -121,7 +114,6 @@ def apply_filters(data, annee=None, departement=None) -> list[dict]:
 # COMMAND ----------
 
 # ── Application ────────────────────────────────────────────────────────────
-
 
 app = FastAPI(
     title="💧 Water Quality API",
@@ -144,17 +136,13 @@ Chaque endpoint supporte `?format=json` (défaut) et `?format=csv` pour téléch
 - **95 départements** métropolitains + DOM
 """,
     version="1.0.0",
-    contact={
-        "name": "Kaouter Rhazlani",
-        "email": "krhazlani.ext@simplonformations.co"},
-    license_info={
-        "name": "Licence Ouverte / Open Licence 2.0"},
+    contact={"name": "Kaouter Rhazlani", "email": "krhazlani.ext@simplonformations.co"},
+    license_info={"name": "Licence Ouverte / Open Licence 2.0"},
 )
 
 # COMMAND ----------
 
 # ── Routes ─────────────────────────────────────────────────────────────────
-
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -170,13 +158,11 @@ def root():
 def health():
     """Vérifie que l'API est opérationnelle et retourne la configuration active."""
     return {
-        "status": "ok",
-        "timestamp": datetime.now(
-            timezone.utc).isoformat(),
-        "environment": "databricks" if IS_DATABRICKS else "local",
-        "gold_source": f"{CATALOG}.{GOLD_SCHEMA}" if IS_DATABRICKS else GOLD_LOCAL,
-        "tables": list(
-            TABLES.values()),
+        "status":       "ok",
+        "timestamp":    datetime.now(timezone.utc).isoformat(),
+        "environment":  "databricks" if IS_DATABRICKS else "local",
+        "gold_source":  f"{CATALOG}.{GOLD_SCHEMA}" if IS_DATABRICKS else GOLD_LOCAL,
+        "tables":       list(TABLES.values()),
     }
 
 
@@ -195,11 +181,12 @@ def list_tables():
     }
 
 
-@app.get("/conformite/departements",
-         tags=["Conformité"],
-         summary="Taux de conformité par département",
-         response_description="Agrégation annuelle par département avec taux conformité / non-conformité",
-         )
+@app.get(
+    "/conformite/departements",
+    tags=["Conformité"],
+    summary="Taux de conformité par département",
+    response_description="Agrégation annuelle par département avec taux conformité / non-conformité",
+)
 def conformite_departements(
     annee: Optional[int] = Query(None, description="Année (ex: 2024)", ge=2016, le=2026),
     departement: Optional[str] = Query(None, description="Code département (ex: 13, 75, 2A)"),
@@ -274,20 +261,13 @@ def parametres_risques(
     Chaque entrée contient le `rank`, `nb_non_conformes`, `pct_non_conformes`,
     `categorie_parametre` et `sous_categorie_parametre`.
     """
-    data = apply_filters(
-        read_gold("gold_parametres_risks"),
-        annee,
-        departement)
+    data = apply_filters(read_gold("gold_parametres_risks"), annee, departement)
     if categorie:
-        data = [
-            r for r in data if r.get(
-                "categorie_parametre",
-                "").lower() == categorie.lower()]
+        data = [r for r in data
+                if r.get("categorie_parametre", "").lower() == categorie.lower()]
     if sous_categorie:
-        data = [
-            r for r in data if r.get(
-                "sous_categorie_parametre",
-                "").lower() == sous_categorie.lower()]
+        data = [r for r in data
+                if r.get("sous_categorie_parametre", "").lower() == sous_categorie.lower()]
     if format == "csv":
         return export_csv(data, f"parametres_risques_{annee or 'all'}")
     if format == "json":
@@ -311,10 +291,7 @@ def evolution_mensuelle(
     Inclut `delta_taux_pct` — variation par rapport au mois précédent —
     pour détecter des dégradations ou améliorations soudaines.
     """
-    data = apply_filters(
-        read_gold("gold_evolution_mensuelle"),
-        annee,
-        departement)
+    data = apply_filters(read_gold("gold_evolution_mensuelle"), annee, departement)
     if format == "csv":
         return export_csv(data, f"evolution_{annee or 'all'}")
     if format == "json":
@@ -322,7 +299,6 @@ def evolution_mensuelle(
     return JSONResponse({"count": len(data), "data": data})
 
 # COMMAND ----------
-
 
 if __name__ == "__main__":
     import uvicorn
