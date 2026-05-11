@@ -433,8 +433,7 @@ def enrich_conformite(df: DataFrame) -> DataFrame:
     - est_conforme        : boolean (True / False / null)
     """
     return (
-        df
-        .withColumn(
+        df .withColumn(
             "conformite_standard",
             F.when(F.lower(F.col("conformite_globale")).rlike(r"non.conforme"), "non_conforme")
             .when(F.lower(F.col("conformite_globale")).contains("remarque"), "conforme_avec_remarque")
@@ -443,11 +442,12 @@ def enrich_conformite(df: DataFrame) -> DataFrame:
         )
         .withColumn(
             "est_conforme",
-            F.when(F.col("conformite_standard") == "conforme", True)
-             .when(F.col("conformite_standard") == "non_conforme", False)
-             .otherwise(F.lit(None).cast("boolean"))
-        )
-    )
+            F.when(
+                F.col("conformite_standard") == "conforme",
+                True) .when(
+                F.col("conformite_standard") == "non_conforme",
+                False) .otherwise(
+                F.lit(None).cast("boolean"))))
 
 
 # COMMAND ----------
