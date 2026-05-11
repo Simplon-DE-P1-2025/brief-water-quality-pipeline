@@ -35,7 +35,6 @@
 # COMMAND ----------
 
 import os
-import sys
 import yaml
 
 from pyspark.sql import SparkSession, DataFrame
@@ -99,61 +98,6 @@ def get_paths(cfg: dict) -> dict:
     return get_silver_cfg(cfg)["paths"][env_key]
 
 
-# COMMAND ----------
-
-# Chargement global (visible par toutes les cellules du notebook)
-# Guard : ne s'execute pas lors d'un import (tests unitaires, etc.)
-_NOTEBOOK_RUN = __name__ == "__main__" or (
-    "ipykernel" in sys.modules
-    or os.environ.get("DATABRICKS_RUNTIME_VERSION")
-    or os.environ.get("SILVER_NOTEBOOK_RUN")
-)
-
-if _NOTEBOOK_RUN:
-    CFG = load_config()
-    SILVER_CFG = get_silver_cfg(CFG)
-    PATHS = get_paths(CFG)
-    UC_CFG = CFG["unity_catalog"]
-    STORAGE = CFG["storage"]
-    SECRETS = STORAGE["secrets"]
-
-    IS_DATABRICKS = is_databricks(CFG)
-
-    BRONZE_PATH = PATHS["bronze"]
-    SILVER_PATH = PATHS["silver"]
-    OUTPUT_TABLE = SILVER_CFG["output_table"]
-    DEDUP_KEYS = SILVER_CFG["dedup_keys"]
-    PARTITION_BY = SILVER_CFG["partition_by"]
-    CATEGORIES = SILVER_CFG["categories"]
-    SOUS_CATS = SILVER_CFG["sous_categories"]
-    OUTPUT_COLS = SILVER_CFG["output_columns"]
-
-    # ── Unity Catalog ──────────────────────────────────────────────────────
-    CATALOG = UC_CFG["catalog"]
-    BRONZE_UC_SCHEMA = UC_CFG["bronze"]["schema"]
-    SILVER_UC_SCHEMA = UC_CFG["silver"]["schema"]
-    SILVER_TABLE_FULL = f"{CATALOG}.{SILVER_UC_SCHEMA}.{OUTPUT_TABLE}"
-
-    # Tables geo Bronze UC
-    GEO_SCHEMA = UC_CFG["geo"]["schema"]
-    UC_REGIONS = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['regions']}"
-    UC_DEPARTEMENTS = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['departements']}"
-    UC_COMMUNES = f"{CATALOG}.{GEO_SCHEMA}.{UC_CFG['geo']['communes']}"
-    UC_WATER_QUALITY = f"{CATALOG}.{BRONZE_UC_SCHEMA}.{
-        UC_CFG['bronze']['table']}"
-
-    # ── Storage ────────────────────────────────────────────────────────────
-    STORAGE_ACCOUNT = STORAGE["account_name"]
-    SECRETS_SCOPE = SECRETS["scope"]
-    SECRET_KEY_NAME = SECRETS["storage_account_key"]
-
-    print(f"Environnement : {'Databricks' if IS_DATABRICKS else 'Local'}")
-    print(f"Bronze UC     : {UC_WATER_QUALITY}")
-    print(f"Silver UC     : {SILVER_TABLE_FULL}")
-    print(f"Silver ADLS   : {SILVER_PATH}/{OUTPUT_TABLE}")
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ## 2 — Session Spark
 # MAGIC
@@ -197,10 +141,8 @@ def get_spark(cfg: dict) -> SparkSession:
 
 
 def load_bronze(
-        spark: SparkSession,
-        bronze_path: str,
-        is_db: bool = False,
-        uc_tables: dict = None) -> dict:
+    spark: SparkSession, bronze_path: str, is_db: bool = False, uc_tables: dict = None
+) -> dict:
     """
     Charge les 4 tables Delta Bronze.
     - Databricks : lecture depuis Unity Catalog (spark.read.table)
@@ -216,12 +158,12 @@ def load_bronze(
         }
     else:
         tables = ["water_quality", "communes", "departements", "regions"]
-        loaded = {t: spark.read.format("delta").load(
-            f"{bronze_path}/{t}") for t in tables}
+        loaded = {
+            t: spark.read.format("delta").load(f"{bronze_path}/{t}") for t in tables
+        }
 
     for name, df in loaded.items():
-        print(
-            f"  {name:<15} : {df.count():>10,} lignes  | {len(df.columns)} colonnes")
+        print(f"  {name:<15} : {df.count():>10,} lignes  | {len(df.columns)} colonnes")
 
     return loaded
 
@@ -243,8 +185,7 @@ def explore_bronze(df_water: DataFrame) -> None:
     df_water.printSchema()
 
     print("\n=== Distribution annee_partition ===")
-    df_water.groupBy("annee_partition").count().orderBy(
-        "annee_partition").show()
+    df_water.groupBy("annee_partition").count().orderBy("annee_partition").show()
 
     null_exprs = [
         (F.count(F.when(F.col(c).isNull(), c)) / total * 100).alias(c)
@@ -386,16 +327,18 @@ def enrich_geo(
             ref_communes,
             df["code_commune"] == ref_communes["_code_commune"],
             how="left",
-        ) .drop("_code_commune") .join(
-            ref_regions,
-            F.col("code_region") == ref_regions["_code_region"],
-            how="left") .drop("_code_region"))
+        )
+        .drop("_code_commune")
+        .join(
+            ref_regions, F.col("code_region") == ref_regions["_code_region"], how="left"
+        )
+        .drop("_code_region")
+    )
 
     n = df_out.count()
     matched = df_out.filter(F.col("nom_region").isNotNull()).count()
     no_geo = df_out.filter(F.col("latitude").isNull()).count()
-    print(
-        f"Taux jointure region  : {matched / n * 100:.1f}%  ({matched:,}/{n:,})")
+    print(f"Taux jointure region  : {matched / n * 100:.1f}%  ({matched:,}/{n:,})")
     print(f"Communes sans geodata : {no_geo:,} / {n:,}")
     return df_out
 
@@ -419,9 +362,9 @@ def enrich_categories(
     """
     cat_expr = F.lit("Autre")
     for code, label in categories.items():
-        cat_expr = F.when(
-            F.col("code_type_parametre") == code,
-            label).otherwise(cat_expr)
+        cat_expr = F.when(F.col("code_type_parametre") == code, label).otherwise(
+            cat_expr
+        )
 
     sub_expr = F.lit("Autre")
     for label, pattern in reversed(list(sous_categories.items())):
@@ -452,24 +395,19 @@ def enrich_conformite(df: DataFrame) -> DataFrame:
     return df.withColumn(
         "conformite_standard",
         F.when(
-            F.lower(
-                F.col("conformite_globale")).rlike(r"non.conforme"),
-            "non_conforme") .when(
-            F.lower(
-                F.col("conformite_globale")).contains("remarque"),
+            F.lower(F.col("conformite_globale")).rlike(r"non.conforme"), "non_conforme"
+        )
+        .when(
+            F.lower(F.col("conformite_globale")).contains("remarque"),
             "conforme_avec_remarque",
-        ) .when(
-            F.lower(
-                F.col("conformite_globale")).contains("conforme"),
-            "conforme") .otherwise("inconnu"),
+        )
+        .when(F.lower(F.col("conformite_globale")).contains("conforme"), "conforme")
+        .otherwise("inconnu"),
     ).withColumn(
         "est_conforme",
-        F.when(
-            F.col("conformite_standard") == "conforme",
-            True) .when(
-            F.col("conformite_standard") == "non_conforme",
-            False) .otherwise(
-            F.lit(None).cast("boolean")),
+        F.when(F.col("conformite_standard") == "conforme", True)
+        .when(F.col("conformite_standard") == "non_conforme", False)
+        .otherwise(F.lit(None).cast("boolean")),
     )
 
 
@@ -615,12 +553,9 @@ def validate_silver(
     df.groupBy("annee").agg(
         F.count("*").alias("nb_analyses"),
         F.round(
-            F.sum(
-                F.when(
-                    F.col("conformite_standard") == "conforme",
-                    1).otherwise(0)) /
-            F.count("*") *
-            100,
+            F.sum(F.when(F.col("conformite_standard") == "conforme", 1).otherwise(0))
+            / F.count("*")
+            * 100,
             2,
         ).alias("taux_conformite_%"),
     ).orderBy("annee").show()
@@ -725,11 +660,7 @@ if __name__ == "__main__":
         secret_key_name=secret_key_name if is_db else None,
     )
 
-    validate_silver(
-        session,
-        out_path,
-        is_db,
-        silver_table_full if is_db else None)
+    validate_silver(session, out_path, is_db, silver_table_full if is_db else None)
 
     if not is_db:
         session.stop()
